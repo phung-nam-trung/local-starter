@@ -1,0 +1,17 @@
+# Large input tree dumps (chứa node_modules — không thuộc pack; CONTEXT.md đã tóm tắt)
+new-frontend-tree.txt
+sp-local-workspace-tree.txt
+
+# Node / build
+node_modules/
+dist/
+build/
+.nx/cache/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+
+# Local-only Claude Code settings (giữ commands/ & agents/ trong .claude/)
+.claude/settings.local.json
