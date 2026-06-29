@@ -51,4 +51,17 @@ contextBridge.exposeInMainWorld('launcher', {
   ports: {
     check: (repoId, options) => ipcRenderer.invoke('ports:check', repoId, options),
   },
+  // F5 / TD1 — VPN detect + connect + poll. check returns { connected, method, detail? };
+  // connect launches OpenVPN GUI (if needed) + fires the native notification + starts a
+  // poll that streams ticks via onTick (same subscribe/unsubscribe pattern as deps/runner).
+  vpn: {
+    check: (config) => ipcRenderer.invoke('vpn:check', config),
+    connect: (config) => ipcRenderer.invoke('vpn:connect', config),
+    cancel: () => ipcRenderer.invoke('vpn:cancel'),
+    onTick: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on('vpn:tick', listener);
+      return () => ipcRenderer.removeListener('vpn:tick', listener);
+    },
+  },
 });

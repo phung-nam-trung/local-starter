@@ -1,12 +1,25 @@
 'use strict';
 
-const { ipcMain } = require('electron');
+const { ipcMain, Notification } = require('electron');
 const repos = require('./orchestrator/repos');
 const git = require('./orchestrator/git');
 const deps = require('./orchestrator/deps');
 const env = require('./orchestrator/env');
 const runner = require('./orchestrator/runner');
 const ports = require('./orchestrator/ports');
+const vpn = require('./orchestrator/vpn');
+
+// VPN (TD1) — at most ONE poll runs at a time. We keep its cancel() handle so vpn:cancel
+// (and a fresh vpn:connect) can stop the previous poll. The poll handle lives in main (not
+// in vpn.js) because the native Notification needs electron.
+let vpnPoll = null;
+
+function cancelVpnPoll() {
+  if (vpnPoll && typeof vpnPoll.cancel === 'function') {
+    vpnPoll.cancel();
+  }
+  vpnPoll = null;
+}
 
 // Registers all IPC handlers. Called once from main.js after app is ready.
 // Keep channels narrow and return metadata only (the registry holds no secrets).
@@ -70,6 +83,93 @@ function setupIpc() {
   ipcMain.handle('ports:check', (_event, repoId, options = {}) =>
     ports.checkRepoPort(repoId, { port: options.port })
   );
+
+  // VPN handlers (F5 / TD1). All config (probeHost/probePort/exePath) comes from the
+  // renderer — nothing is hardcoded. The native "Hãy đăng nhập VPN" Notification is fired
+  // HERE (needs electron), not in vpn.js. Poll ticks stream back via vpn:tick.
+  //
+  // vpn:check — one-shot detection. Returns { connected, method, detail? }.
+  ipcMain.handle('vpn:check', (_event, config = {}) =>
+    vpn.isVpnConnected({
+      probeHost: config.probeHost,
+      probePort: config.probePort,
+      timeoutMs: config.timeoutMs,
+    })
+  );
+
+  // vpn:connect — if already connected, do nothing. Otherwise: launch openvpn-gui.exe (only
+  // if it isn't already running) + fire the native Notification + start polling. The invoke
+  // result reports what we did ({ ok, alreadyConnected, launch?, notified, polling }); the
+  // poll's outcome arrives later via the final vpn:tick + the caller observing connected.
+  ipcMain.handle('vpn:connect', async (event, config = {}) => {
+    const probeConfig = {
+      probeHost: config.probeHost,
+      probePort: config.probePort,
+      timeoutMs: config.timeoutMs,
+    };
+
+    const initial = await vpn.isVpnConnected(probeConfig);
+    if (initial.connected) {
+      return { ok: true, alreadyConnected: true, method: initial.method, detail: initial.detail };
+    }
+
+    // Launch the GUI only when it isn't already running (don't pop a second window).
+    let launch = null;
+    const running = await vpn.isOpenVpnGuiRunning();
+    if (!running) {
+      launch = vpn.launchOpenVpnGui(config.exePath);
+    } else {
+      launch = { ok: true, launched: false, message: 'OpenVPN GUI is already running.' };
+    }
+
+    // Native notification — guard with isSupported() so headless/unsupported hosts are safe.
+    let notified = false;
+    try {
+      if (Notification && Notification.isSupported && Notification.isSupported()) {
+        new Notification({
+          title: 'VPN',
+          body: 'Hãy đăng nhập VPN',
+        }).show();
+        notified = true;
+      }
+    } catch (_err) {
+      // Notification must never break the connect flow.
+    }
+
+    // Replace any previous poll, then start a fresh one. Ticks are streamed to the renderer
+    // that initiated the connect; the final tick reflects connected/timeout/cancel.
+    cancelVpnPoll();
+    vpnPoll = vpn.waitForConnection(probeConfig, {
+      intervalMs: config.intervalMs, // per-poll cadence (vpn.js default 2500ms)
+      timeoutMs: config.pollTimeoutMs, // total poll budget (vpn.js default 120000ms)
+      onTick: (tick) => event.sender.send('vpn:tick', tick),
+    });
+    vpnPoll.promise.then((outcome) => {
+      vpnPoll = null;
+      // Final summary tick so the UI can settle even if it missed the resolve.
+      try {
+        event.sender.send('vpn:tick', { ...outcome, final: true });
+      } catch (_err) {
+        // sender may be gone if the window closed — ignore.
+      }
+    });
+
+    return {
+      ok: true,
+      alreadyConnected: false,
+      launch,
+      notified,
+      polling: true,
+      method: initial.method,
+    };
+  });
+
+  // vpn:cancel — stop the in-flight poll (does NOT disconnect the VPN).
+  ipcMain.handle('vpn:cancel', () => {
+    const wasPolling = Boolean(vpnPoll);
+    cancelVpnPoll();
+    return { ok: true, cancelled: wasPolling };
+  });
 
   ipcMain.handle('runner:stop', (_event, repoId) => runner.stop(repoId));
   ipcMain.handle('runner:status', (_event, repoId) => runner.getStatus(repoId));

@@ -3,6 +3,7 @@ import BranchPicker from './BranchPicker.jsx';
 import DepsPanel from './DepsPanel.jsx';
 import EnvSelector from './EnvSelector.jsx';
 import RunControls from './RunControls.jsx';
+import VpnStatus from './VpnStatus.jsx';
 
 // F1 / TA2 — list the 9 repos grouped by workspace, each with a select checkbox.
 // F2/F3 / TB2 — clicking a repo makes it "active"; the BranchPicker on the right shows
@@ -163,6 +164,7 @@ export default function RepoList() {
           gap: '1rem',
         }}
       >
+        <VpnStatus />
         <EnvSelector />
         <BranchPicker repo={activeRepo} />
         <DepsPanel repo={activeRepo} />
