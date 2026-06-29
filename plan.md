@@ -41,7 +41,7 @@ UI (renderer React) ⇄ **IPC** ⇄ **Orchestrator (Node, UI-agnostic)** ⇄ h�
 > Quy ước: `- [ ] T<id>: <việc>` · `Acceptance:` · `Verify:` · `Files:` · `Deps:`. Coder làm 1 task/lượt, tick `[x]` khi PASS.
 
 ### Phase A — Scaffold dự án
-- [ ] **TA1: Khởi tạo Electron + Vite + React, mở được cửa sổ rỗng**
+- [x] **TA1: Khởi tạo Electron + Vite + React, mở được cửa sổ rỗng**
   - Acceptance: `npm start` build renderer (Vite) + mở 1 cửa sổ Electron hiển thị "Local Dev Launcher"; không lỗi console.
   - Verify: chạy `npm start` → cửa sổ hiện ra; đóng cửa sổ → process thoát sạch.
   - Files: `package.json`, `vite.config.js`, `src/main/main.js`, `src/main/preload.js`, `src/renderer/index.html`, `src/renderer/App.jsx`.
