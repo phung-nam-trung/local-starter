@@ -5,6 +5,7 @@ const repos = require('./orchestrator/repos');
 const git = require('./orchestrator/git');
 const deps = require('./orchestrator/deps');
 const env = require('./orchestrator/env');
+const runner = require('./orchestrator/runner');
 
 // Registers all IPC handlers. Called once from main.js after app is ready.
 // Keep channels narrow and return metadata only (the registry holds no secrets).
@@ -41,6 +42,37 @@ function setupIpc() {
   // selfpointrest env handlers (F6 / TE1). Return metadata only: never .env contents.
   ipcMain.handle('env:getStatus', () => env.getSelfpointrestEnvStatus());
   ipcMain.handle('env:apply', (_event, envName) => env.applySelfpointrestEnv(envName));
+
+  // Process orchestrator handlers (F7/F9/F10 — TF1). start/restart stream stdout/stderr
+  // back to the requesting renderer via runner:log; the invoke result carries the final
+  // serializable snapshot. All runner.* functions return plain objects and never throw.
+  ipcMain.handle('runner:start', (event, repoId, options = {}) =>
+    runner.start(repoId, {
+      buildUIs: options.buildUIs,
+      port: options.port,
+      skipBuild: Boolean(options.skipBuild),
+      onOutput: (payload) => event.sender.send('runner:log', payload),
+    })
+  );
+  ipcMain.handle('runner:restart', (event, repoId, options = {}) =>
+    runner.restart(repoId, {
+      buildUIs: options.buildUIs,
+      port: options.port,
+      skipBuild: Boolean(options.skipBuild),
+      onOutput: (payload) => event.sender.send('runner:log', payload),
+    })
+  );
+  ipcMain.handle('runner:stop', (_event, repoId) => runner.stop(repoId));
+  ipcMain.handle('runner:status', (_event, repoId) => runner.getStatus(repoId));
+  ipcMain.handle('runner:describe', (_event, repoId, options = {}) =>
+    // Cherry-pick safe fields only (like start/restart) — never forward the test-only
+    // commandOverride/cwd hooks from the renderer into the command preview.
+    runner.describeRun(repoId, {
+      buildUIs: options.buildUIs,
+      port: options.port,
+      skipBuild: Boolean(options.skipBuild),
+    })
+  );
 }
 
 module.exports = { setupIpc };

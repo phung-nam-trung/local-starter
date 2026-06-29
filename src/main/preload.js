@@ -33,4 +33,18 @@ contextBridge.exposeInMainWorld('launcher', {
     getStatus: () => ipcRenderer.invoke('env:getStatus'),
     apply: (envName) => ipcRenderer.invoke('env:apply', envName),
   },
+  // F7/F9/F10 — process orchestrator (TF1). start/restart return a serializable snapshot
+  // and stream stdout/stderr via onLog (same subscribe/unsubscribe pattern as deps).
+  runner: {
+    start: (repoId, options) => ipcRenderer.invoke('runner:start', repoId, options),
+    restart: (repoId, options) => ipcRenderer.invoke('runner:restart', repoId, options),
+    stop: (repoId) => ipcRenderer.invoke('runner:stop', repoId),
+    status: (repoId) => ipcRenderer.invoke('runner:status', repoId),
+    describe: (repoId, options) => ipcRenderer.invoke('runner:describe', repoId, options),
+    onLog: (handler) => {
+      const listener = (_event, payload) => handler(payload);
+      ipcRenderer.on('runner:log', listener);
+      return () => ipcRenderer.removeListener('runner:log', listener);
+    },
+  },
 });
