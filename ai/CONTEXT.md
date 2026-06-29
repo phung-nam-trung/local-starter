@@ -34,7 +34,7 @@ Tất cả đường dẫn dưới đây tương đối so với `repositories/`
 | 1 | **selfpointrest** | `sp-local-workspace/servers/selfpointrest` | Backend chính | `npm install` *(postinstall tự chạy `buildAll`)* | `npm run buildAll` (`npx gulp buildAll`) | `npm start` (`node server.js`) | **3000** (https 3001) |
 | 2 | **loyalty** | `sp-local-workspace/servers/loyalty` | Backend loyalty | `npm install` | — (không có) | `npm start` (`node lib/server`) | **4000** |
 | 3 | **indexer-queue-subscriber** | `sp-local-workspace/servers/indexer-queue-subscriber` | Indexer (Elasticsearch) | `npm install` | — | `npm start` (`node --max-old-space-size=3000 ./server.js`) | **4002** |
-| 4 | **token-service** | `sp-local-workspace/servers/token-service` | Token (TypeScript) | `npm install` | `npm run build` (`tsc` → `dist/`) | `npm start` (`cleanBuild && node dist/index.js`) | **4000** ⚠️ |
+| 4 | **token-service** | `sp-local-workspace/servers/token-service` | Token (TypeScript) | `npm install` | `npm run build` (`tsc` → `dist/`) | `npm start` (`cleanBuild && node dist/index.js`) | **4001** (set qua `.env`; code mặc định 4000) |
 
 ### 3.2 sp-local-workspace — UI (public)
 
@@ -131,14 +131,15 @@ Repo này **không chạy "ngay"** mà thường cần chỉnh test trước:
 |---|---|
 | 3000 / 3001 | selfpointrest (http/https) |
 | 3002 | stor-web |
-| 4000 | **loyalty** *và* **token-service** ⚠️ trùng |
+| 4000 | loyalty |
+| 4001 | token-service (set qua `.env` PORT) |
 | 4002 | indexer-queue-subscriber |
 | 9000 | **mobile** *và* **collection** ⚠️ trùng |
 | 35999 | frontend livereload |
 
 **Xử lý xung đột (Leader thiết kế):**
-- loyalty & token-service đều mặc định 4000 → nếu chạy đồng thời phải **override `PORT`** cho một trong hai (cả hai đọc `process.env.PORT`). Launcher nên cho cấu hình port override mỗi repo.
-- mobile & collection đều 9000 → tương tự, hiếm khi chạy cùng lúc nhưng phải cảnh báo nếu user chọn cả hai.
+- token-service **đã** được set `PORT=4001` trong `.env` của nó → **không trùng** loyalty (4000); không cần override. (Launcher vẫn nên hỗ trợ override `PORT` mỗi repo như tùy chọn chung.)
+- mobile & collection đều 9000 → hiếm khi chạy cùng lúc nhưng phải cảnh báo nếu user chọn cả hai.
 - Trước khi start một repo, launcher nên **kiểm tra port có đang bận không** (và báo rõ repo nào đang giữ port).
 
 ---
@@ -204,7 +205,7 @@ Launcher (bất kể stack nào) phải làm được:
          npm run build-backend                        (→ /backend)
          npm run build-kikar | npm run build-prutah   (→ /kikar | /prutah)
      - npm start  (port 3000)
-3. loyalty (4000), token-service (4000→override), indexer (4002, sau khi sửa code) — chạy song song được
+3. loyalty (4000), token-service (4001), indexer (4002, sau khi sửa code) — chạy song song được
 4. UI độc lập: mobile (9000), collection (9000), stor-web (3002)
 ```
 

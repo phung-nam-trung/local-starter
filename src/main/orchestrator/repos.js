@@ -83,7 +83,7 @@ const repos = [
     needsVpn: true,
     buildOnly: false,
     servedBy: null,
-    portConflictWith: ['token-service'], // both default 4000 (CONTEXT §8)
+    portConflictWith: null, // token-service listens on 4001 via its .env — no clash
     needsCodeEdit: false,
     templates: null,
     postinstallNote: null,
@@ -122,12 +122,12 @@ const repos = [
     install: 'npm install',
     build: 'npm run build', // tsc -> dist/
     start: 'npm start', // cleanBuild && node dist/index.js
-    port: 4000,
+    port: 4001, // listens on 4001 via its own .env PORT (code default is 4000) — no clash with loyalty
     defaultBranch: SP_BRANCH,
     needsVpn: true,
     buildOnly: false,
     servedBy: null,
-    portConflictWith: ['loyalty'], // both default 4000 (CONTEXT §8)
+    portConflictWith: null,
     needsCodeEdit: false,
     templates: null,
     postinstallNote: null,
