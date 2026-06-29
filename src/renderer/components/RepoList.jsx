@@ -55,6 +55,30 @@ export default function RepoList() {
 
   const activeRepo = repos.find((r) => r.id === activeId) || null;
 
+  // TF3 — warn when two selected repos share a default port (e.g. mobile & collection both
+  // on 9000, CONTEXT §8). Generic: derived from each repo's `portConflictWith` in the
+  // registry, so no repo names are hardcoded. Each clashing pair is reported once, with the
+  // shared port for context.
+  const conflictById = new Map(repos.map((r) => [r.id, r]));
+  const portConflicts = [];
+  const seenPairs = new Set();
+  for (const repo of repos) {
+    if (!selected.has(repo.id) || !Array.isArray(repo.portConflictWith)) continue;
+    for (const otherId of repo.portConflictWith) {
+      if (!selected.has(otherId)) continue;
+      const pairKey = [repo.id, otherId].sort().join('|');
+      if (seenPairs.has(pairKey)) continue;
+      seenPairs.add(pairKey);
+      const other = conflictById.get(otherId);
+      portConflicts.push({
+        key: pairKey,
+        a: repo.name,
+        b: other ? other.name : otherId,
+        port: repo.port,
+      });
+    }
+  }
+
   return (
     <section style={{ display: 'flex', gap: '1.5rem', alignItems: 'flex-start' }}>
       <div style={{ flex: '1 1 0', minWidth: 0 }}>
@@ -62,6 +86,13 @@ export default function RepoList() {
         <p style={{ margin: '0 0 1rem', color: '#555' }}>
           {selected.size} selected / {repos.length} total · click một repo để xem branch
         </p>
+
+        {portConflicts.map((c) => (
+          <div key={c.key} style={styles.portWarn} role="alert">
+            <strong>Trùng port {c.port}:</strong> <code>{c.a}</code> &amp;{' '}
+            <code>{c.b}</code> cùng dùng port {c.port} — chỉ nên chạy 1 cái cùng lúc.
+          </div>
+        ))}
 
         {groups.map((group) => (
           <div key={group.workspace} style={{ marginBottom: '1.5rem' }}>
@@ -140,3 +171,16 @@ export default function RepoList() {
     </section>
   );
 }
+
+const styles = {
+  // Amber warning banner — same palette as RunControls' port-busy warn (CONTEXT §8).
+  portWarn: {
+    color: '#7a4d00',
+    background: '#fff4ce',
+    border: '1px solid #f1d27a',
+    padding: '0.5rem 0.7rem',
+    borderRadius: 6,
+    margin: '0 0 1rem',
+    fontSize: '0.9rem',
+  },
+};
