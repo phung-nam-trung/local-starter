@@ -2,6 +2,7 @@
 
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
+const { setupIpc } = require('./ipc');
 
 // Dev mode unless the app is packaged. In dev we boot a Vite dev server in-process
 // (no extra concurrently/wait-on deps); in production we load the built file.
@@ -29,7 +30,8 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // Sandboxed preload still has contextBridge + ipcRenderer, which is all we use.
+      sandbox: true,
     },
   });
 
@@ -49,7 +51,10 @@ async function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  setupIpc();
+  return createWindow();
+});
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
