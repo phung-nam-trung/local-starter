@@ -53,7 +53,7 @@ UI (renderer React) ⇄ **IPC** ⇄ **Orchestrator (Node, UI-agnostic)** ⇄ h�
   - Deps: TA1
 
 ### Phase B — Git & Branch (F2, F3)
-- [ ] **TB1: Git layer — list branch + current + isClean**
+- [x] **TB1: Git layer — list branch + current + isClean**
   - Acceptance: hàm `listBranches(repoId)` trả về local+remote; `currentBranch(repoId)`; `isClean(repoId)` đúng với `git status`.
   - Verify: với selfpointrest và stor-web, so kết quả hàm vs `git branch -a` / `git status` chạy tay → khớp.
   - Files: `src/main/orchestrator/git.js`, `src/main/ipc.js`.
