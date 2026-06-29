@@ -16,7 +16,7 @@ Xây một **app "Local Dev Launcher"** giúp dev khởi động môi trường 
 
 | Workspace | Đường dẫn tuyệt đối | Package manager | Node | Tooling |
 |---|---|---|---|---|
-| **sp-local-workspace** | `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace` | **npm** | **20.18.0** | root có `builder/` orchestration (script `init-*`, `build-*`, `start-*`) |
+| **sp-local-workspace** | `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace` | **npm** | **20.18.0** | build/init UI orchestrate qua `servers/selfpointrest` (script `build-backend`/`build-kikar`/`build-prutah`/`build-mobile`/`build-collection`, `init-*`) |
 | **new-frontend** | `C:\Users\TrungPhung\Downloads\repositories\new-frontend` | **pnpm@10.12.1** | **20+** | Nx 22 monorepo, Next.js 16, Husky |
 
 > Launcher đặt ở `C:\Users\TrungPhung\Downloads\personal-trung-phung\local-starter` và **quản lý các repo bên ngoài** qua đường dẫn tuyệt đối ở trên. Không di chuyển/sửa file bên trong `repositories/*` ngoài những gì đặc tả ở đây (đổi tên `.env`, sửa code indexer).
@@ -40,10 +40,15 @@ Tất cả đường dẫn dưới đây tương đối so với `repositories/`
 
 | # | Repo | Path | Vai trò | Install | Build | Start/Serve | Port |
 |---|---|---|---|---|---|---|---|
-| 5 | **backend (Back Office)** | `sp-local-workspace/public/backend` | UI Back Office (AngularJS + Gulp) | `npm install` *(postinstall `bower install`)* | `npm run build` / `npm run watch` | **build-only** → selfpointrest serve ở `/backend` | — |
-| 6 | **frontend** | `sp-local-workspace/public/frontend` | UI Frontend (AngularJS) | `npm install` *(postinstall `bower`)* | `node builder --template=Kikar` **hoặc** `--template=Prutah` | `node livereload run <Template>` | **35999** (livereload) |
+| 5 | **backend (Back Office)** | `sp-local-workspace/public/backend` | UI Back Office (AngularJS + Gulp) | `npm install` *(postinstall `bower install`)* | qua selfpointrest `npm run build-backend` (hoặc backend `npm run build-local`) | **build-only** → selfpointrest serve ở `/backend` | — |
+| 6 | **frontend** | `sp-local-workspace/public/frontend` | UI Frontend (AngularJS) | `npm install` *(postinstall `bower install --config.directory=libs`)* | qua selfpointrest `npm run build-kikar` / `npm run build-prutah` (hoặc frontend `npm run build-local`) | **build-only** → selfpointrest serve ở `/kikar`, `/prutah` | livereload 35999 (dev) |
 | 7 | **mobile** | `sp-local-workspace/public/mobile` | UI web mobile (AngularJS + Cordova) | `npm install` *(postinstall `bower`)* | `npm run build` (`gulp web:build`) | `npm run serve` (`gulp web:serve`) | **9000** |
 | 8 | **collection** | `sp-local-workspace/public/collection` | UI collection (AngularJS + Cordova) | `npm install` *(postinstall `bower`)* | `npm run build` | `npm run serve` | **9000** ⚠️ |
+
+> **Build UI để selfpointrest serve (verified 2026-06-29):** dùng script orchestration trong **selfpointrest**: `npm run build-backend`, `npm run build-kikar`, `npm run build-prutah`, `npm run build-mobile`, `npm run build-collection` (+ `init-*` để setup client). Mỗi UI cũng có `npm run build-local` (output vào `servers/selfpointrest/build/<client>`).
+> - `backend`/`frontend` **không có dev server riêng** → build rồi để selfpointrest serve ở `/backend`, `/kikar`, `/prutah`.
+> - `mobile`/`collection` chạy **standalone dev** bằng `npm run serve` (gulp `web:serve`, port 9000).
+> - ⚠️ `public/frontend` **KHÔNG** có script `node builder --template=...` hay `node livereload run` (livereload 35999 chỉ là chế độ dev template, không phải npm script). Build template qua selfpointrest `build-kikar`/`build-prutah`.
 
 ### 3.3 new-frontend
 
@@ -99,7 +104,7 @@ selfpointrest **phục vụ các UI tĩnh đã build**:
 Điều kiện: trong `.env` của selfpointrest phải có `clients_dir="../../public"` (trỏ tới thư mục `public/` chứa output build của backend/frontend).
 
 **Hệ quả cho launcher:**
-- Muốn xem UI Back Office / Frontend → phải **build** repo đó (output vào `public/.../build`) **rồi** chạy selfpointrest. Hai UI này **không có dev server riêng** (frontend chỉ có livereload 35999 khi đang phát triển template).
+- Muốn xem UI Back Office / Frontend → phải **build** (qua selfpointrest: `npm run build-backend` / `build-kikar` / `build-prutah`; output vào `servers/selfpointrest/build/<client>`) **rồi** chạy selfpointrest. Hai UI này **không có dev server riêng** (frontend chỉ có livereload 35999 ở chế độ dev template, không phải npm script chuẩn).
 - `mobile` và `collection` thì **độc lập** — chạy dev server riêng ở port 9000.
 - `stor-web` (new-frontend) độc lập — port 3002.
 
@@ -195,9 +200,9 @@ Launcher (bất kể stack nào) phải làm được:
 2. selfpointrest:
      - chọn env prod/test → .env (F6)
      - install (nếu thiếu) → buildAll
-     - nếu muốn xem UI Back Office / Frontend:
-         build public/backend  (→ /backend)
-         build public/frontend --template=Kikar|Prutah  (→ /kikar | /prutah)
+     - nếu muốn xem UI Back Office / Frontend (build qua script selfpointrest):
+         npm run build-backend                        (→ /backend)
+         npm run build-kikar | npm run build-prutah   (→ /kikar | /prutah)
      - npm start  (port 3000)
 3. loyalty (4000), token-service (4000→override), indexer (4002, sau khi sửa code) — chạy song song được
 4. UI độc lập: mobile (9000), collection (9000), stor-web (3002)
