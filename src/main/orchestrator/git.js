@@ -1,8 +1,10 @@
 'use strict';
 
-// Git layer (TB1) — UI-agnostic read-only helpers over the `git` CLI.
-// Scope: list branches (local + remote), current branch, working-tree cleanliness.
-// Fetch / checkout / pull and the branch picker UI are TB2 — NOT here.
+// Git layer — UI-agnostic helpers over the `git` CLI.
+// TB1: list branches (local + remote), current branch, working-tree cleanliness.
+// TB2: fetch (--all --prune), safe checkout, safe pull. All mutating ops here REFUSE to
+// touch a dirty working tree — they return { ok:false, reason:'dirty' } instead of
+// throwing or running git, so the caller (and the UI) can warn without losing changes.
 //
 // Every repo path comes from the registry (repos.js getRepo); we never hardcode paths.
 // We use execFile('git', [args...]) — args as an ARRAY, never a concatenated string —
@@ -52,9 +54,9 @@ function git(cwd, args) {
 // listBranches(repoId) -> [{ name, isRemote, isCurrent }]
 //   remote entries also carry { remote, short } (e.g. name "origin/feat-x" ->
 //   remote "origin", short "feat-x") so TB2 needn't re-split "origin/".
-// Local heads first (in git's order), then remote-only branches. A remote ref whose
-// bare name already exists locally is deduped away (local entry wins, it carries
-// isCurrent). The symbolic `refs/remotes/<remote>/HEAD` pointer is dropped.
+// Local heads first (in git's order), then all remote branches. The symbolic
+// `refs/remotes/<remote>/HEAD` pointer is dropped, but real remote refs are kept even
+// when their bare branch name also exists locally (e.g. `master` + `origin/master`).
 async function listBranches(repoId) {
   const cwd = repoCwd(repoId);
   // We match/filter on the FULL %(refname); %(refname:short) is only the display name.
@@ -90,11 +92,7 @@ async function listBranches(repoId) {
     }
   }
 
-  // Dedupe: a remote branch whose bare name matches a local branch is redundant.
-  const localNames = new Set(locals.map((b) => b.name));
-  const dedupedRemotes = remotes.filter((b) => !localNames.has(b.short));
-
-  return [...locals, ...dedupedRemotes];
+  return [...locals, ...remotes];
 }
 
 // currentBranch(repoId) -> branch name, or '(detached)' when HEAD is detached.
@@ -112,4 +110,142 @@ async function isClean(repoId) {
   return out.trim() === '';
 }
 
-module.exports = { listBranches, currentBranch, isClean };
+// ---------------------------------------------------------------------------
+// TB2 — mutating ops. Each returns a SERIALIZABLE plain object so it crosses IPC
+// cleanly and the UI never has to inspect an Error instance:
+//   { ok: true,  branch?, message? }
+//   { ok: false, reason: 'dirty' | 'error' | 'unknown-repo', branch?, message }
+// `branch` (when present) is the repo's current branch AFTER the call — handy for the
+// UI to confirm a checkout actually moved (or, on refusal, that it did NOT).
+// ---------------------------------------------------------------------------
+
+// Build a uniform error result, surfacing git's stderr in `message` (already baked into
+// the Error thrown by git()). Never throws — callers get a result object either way.
+function errResult(err) {
+  return { ok: false, reason: 'error', message: (err && err.message) || String(err) };
+}
+
+// fetch(repoId) -> { ok, message } | { ok:false, reason:'error', message }
+// `git fetch --all --prune`. Read-only w.r.t. the working tree (updates remote-tracking
+// refs only), so it is always safe to run — no clean check needed.
+async function fetch(repoId) {
+  let cwd;
+  try {
+    cwd = repoCwd(repoId);
+  } catch (err) {
+    return { ok: false, reason: 'unknown-repo', message: err.message };
+  }
+  try {
+    // git writes its progress ("Fetching origin", pruned refs) to stderr; we don't need
+    // it on success, and git() already folds stderr into the error message on failure.
+    await git(cwd, ['fetch', '--all', '--prune']);
+    return { ok: true, message: 'Fetched all remotes (pruned stale refs).' };
+  } catch (err) {
+    return errResult(err);
+  }
+}
+
+// checkout(repoId, branch) -> result object.
+// SAFE by contract: refuses when the working tree is dirty (returns reason:'dirty' and
+// does NOT run checkout) so local changes are never clobbered. `branch` may be:
+//   - a local branch name (e.g. "master")           -> `git checkout master`
+//   - a remote-only ref ("origin/feat-x" or its bare "feat-x" when only remote exists)
+//        -> create a tracking branch: `git checkout -b feat-x --track origin/feat-x`
+// We resolve which case applies from listBranches() rather than guessing from the string.
+async function checkout(repoId, branch) {
+  let cwd;
+  try {
+    cwd = repoCwd(repoId);
+  } catch (err) {
+    return { ok: false, reason: 'unknown-repo', message: err.message };
+  }
+  if (!branch || typeof branch !== 'string') {
+    return { ok: false, reason: 'error', message: 'checkout: branch is required.' };
+  }
+
+  try {
+    // Guard FIRST: never mutate a dirty tree. Report the current branch so the UI can
+    // show "still on <X>" — proof nothing moved.
+    if (!(await isClean(repoId))) {
+      const cur = await currentBranch(repoId);
+      return {
+        ok: false,
+        reason: 'dirty',
+        branch: cur,
+        message:
+          'Working tree có thay đổi chưa commit — checkout bị từ chối để không mất thay đổi. ' +
+          'Hãy commit/stash thủ công rồi thử lại.',
+      };
+    }
+
+    // Decide local vs remote-only from the branch list (single source of truth).
+    const branches = await listBranches(repoId);
+    const local = branches.find((b) => !b.isRemote && b.name === branch);
+    // Match a remote entry either by its full name ("origin/feat-x") or bare short ("feat-x").
+    const remote = branches.find(
+      (b) => b.isRemote && (b.name === branch || b.short === branch)
+    );
+
+    if (local) {
+      // Plain local branch — just switch to it.
+      await git(cwd, ['checkout', branch]);
+    } else if (remote) {
+      const localForRemote = branches.find((b) => !b.isRemote && b.name === remote.short);
+      if (localForRemote) {
+        // The picker can show both `master` and `origin/master`. If the user selects the
+        // remote ref while the local branch already exists, switch to the local branch
+        // instead of trying to create a duplicate local name.
+        await git(cwd, ['checkout', localForRemote.name]);
+      } else {
+        // Remote-only: create a local tracking branch named after the bare branch.
+        // `--track origin/<short>` sets upstream so a later pull "just works".
+        const short = remote.short || branch;
+        const upstream = remote.name; // e.g. "origin/feat-x"
+        await git(cwd, ['checkout', '-b', short, '--track', upstream]);
+      }
+    } else {
+      // Neither local nor a known remote ref — surface a clear, non-throwing error.
+      return {
+        ok: false,
+        reason: 'error',
+        message: `Branch "${branch}" không có trong local lẫn remote (thử Fetch trước?).`,
+      };
+    }
+
+    const cur = await currentBranch(repoId);
+    return { ok: true, branch: cur, message: `Đã checkout "${cur}".` };
+  } catch (err) {
+    return errResult(err);
+  }
+}
+
+// pull(repoId) -> result object. Safe: refuses on a dirty tree (reason:'dirty'); never
+// force-pulls. On a clean tree runs `git pull` (uses the current branch's upstream).
+async function pull(repoId) {
+  let cwd;
+  try {
+    cwd = repoCwd(repoId);
+  } catch (err) {
+    return { ok: false, reason: 'unknown-repo', message: err.message };
+  }
+  try {
+    if (!(await isClean(repoId))) {
+      const cur = await currentBranch(repoId);
+      return {
+        ok: false,
+        reason: 'dirty',
+        branch: cur,
+        message:
+          'Working tree có thay đổi chưa commit — pull bị từ chối để không mất thay đổi. ' +
+          'Hãy commit/stash thủ công rồi thử lại.',
+      };
+    }
+    const out = await git(cwd, ['pull']);
+    const cur = await currentBranch(repoId);
+    return { ok: true, branch: cur, message: out.trim() || 'Already up to date.' };
+  } catch (err) {
+    return errResult(err);
+  }
+}
+
+module.exports = { listBranches, currentBranch, isClean, fetch, checkout, pull };

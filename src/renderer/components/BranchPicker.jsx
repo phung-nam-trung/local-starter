@@ -1,0 +1,280 @@
+import React, { useCallback, useEffect, useState } from 'react';
+
+// F2/F3 / TB2 — branch picker for ONE repo.
+// Shows current branch + clean/dirty; Fetch; a branch dropdown (local + remote) with the
+// repo's defaultBranch PRESELECTED when present (fallback: current branch, else first in
+// list — never fails just because the default is missing); Checkout + Pull.
+//
+// SAFETY: when the working tree is dirty we DISABLE checkout/pull and show a warning.
+// The main process also refuses dirty mutations (reason:'dirty') — this UI guard is the
+// first line; the orchestrator is the backstop. We never stash/overwrite for the user.
+
+// Pick the branch to preselect from the loaded list (matches the orchestrator's intent):
+//   1) repo.defaultBranch if a LOCAL branch by that name exists
+//   2) else a remote whose bare short == defaultBranch (e.g. only origin/master exists)
+//   3) else the current branch
+//   4) else the first entry
+// Returns the branch *value* we use for <select> (full name, e.g. "master" or "origin/x").
+function pickDefault(branches, defaultBranch, current) {
+  if (!branches.length) return '';
+  if (defaultBranch) {
+    const localMatch = branches.find((b) => !b.isRemote && b.name === defaultBranch);
+    if (localMatch) return localMatch.name;
+    const remoteMatch = branches.find((b) => b.isRemote && b.short === defaultBranch);
+    if (remoteMatch) return remoteMatch.name;
+  }
+  if (current) {
+    const curMatch = branches.find((b) => !b.isRemote && b.name === current);
+    if (curMatch) return curMatch.name;
+  }
+  return branches[0].name;
+}
+
+export default function BranchPicker({ repo }) {
+  const [branches, setBranches] = useState([]);
+  const [current, setCurrent] = useState(null);
+  const [clean, setClean] = useState(null); // null = unknown/loading
+  const [chosen, setChosen] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(null); // 'fetch' | 'checkout' | 'pull' | null
+  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null); // last op result message (ok or refusal)
+
+  // Reload current branch / cleanliness / branch list for this repo. Preselects default.
+  const refresh = useCallback(
+    async (preserveChosen) => {
+      if (!repo) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const [list, cur, isClean] = await Promise.all([
+          window.launcher.git.listBranches(repo.id),
+          window.launcher.git.currentBranch(repo.id),
+          window.launcher.git.isClean(repo.id),
+        ]);
+        setBranches(list);
+        setCurrent(cur);
+        setClean(isClean);
+        setChosen((prev) =>
+          preserveChosen && prev && list.some((b) => b.name === prev)
+            ? prev
+            : pickDefault(list, repo.defaultBranch, cur)
+        );
+      } catch (err) {
+        setError(String(err));
+        setBranches([]);
+        setCurrent(null);
+        setClean(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [repo]
+  );
+
+  // Reload whenever the active repo changes. Reset transient notices too.
+  useEffect(() => {
+    setNotice(null);
+    setError(null);
+    refresh(false);
+  }, [refresh]);
+
+  if (!repo) {
+    return (
+      <section style={styles.panel}>
+        <p style={{ margin: 0, color: '#666' }}>
+          Chọn một repo ở danh sách bên trái để xem branch.
+        </p>
+      </section>
+    );
+  }
+
+  const dirty = clean === false;
+  // stor-web's .git lives at the new-frontend monorepo root, so a checkout/pull there
+  // moves the WHOLE monorepo, not just apps/stor-web (CONTEXT §3.3 / TB2 note).
+  const monorepoRoot = repo.id === 'stor-web';
+
+  async function onFetch() {
+    setBusy('fetch');
+    setNotice(null);
+    setError(null);
+    try {
+      const res = await window.launcher.git.fetch(repo.id);
+      setNotice(res.message || (res.ok ? 'Fetched.' : 'Fetch failed.'));
+      // Fetch can reveal new remote branches; reload the list (keep current selection).
+      await refresh(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onCheckout() {
+    if (dirty) return; // UI guard; orchestrator also refuses.
+    setBusy('checkout');
+    setNotice(null);
+    setError(null);
+    try {
+      const res = await window.launcher.git.checkout(repo.id, chosen);
+      setNotice(res.message || (res.ok ? 'Checked out.' : 'Checkout refused.'));
+      await refresh(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onPull() {
+    if (dirty) return; // UI guard; orchestrator also refuses.
+    setBusy('pull');
+    setNotice(null);
+    setError(null);
+    try {
+      const res = await window.launcher.git.pull(repo.id);
+      setNotice(res.message || (res.ok ? 'Pulled.' : 'Pull refused.'));
+      await refresh(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const anyBusy = busy !== null || loading;
+
+  return (
+    <section style={styles.panel}>
+      <h3 style={{ margin: '0 0 0.5rem' }}>
+        Branch · <code>{repo.name}</code>
+      </h3>
+
+      {error && <p style={styles.error}>Lỗi: {error}</p>}
+
+      <p style={{ margin: '0 0 0.5rem' }}>
+        Current:{' '}
+        <strong>{current == null ? '…' : current}</strong>
+        {' · '}
+        {clean == null ? (
+          'status …'
+        ) : clean ? (
+          <span style={{ color: '#107c10' }}>clean</span>
+        ) : (
+          <span style={{ color: '#b00020' }}>dirty (uncommitted changes)</span>
+        )}
+      </p>
+
+      {dirty && (
+        <div style={styles.warn}>
+          Repo đang có thay đổi chưa commit. <strong>Checkout/Pull bị chặn</strong> để
+          không mất thay đổi — hãy commit hoặc stash thủ công rồi Fetch lại.
+        </div>
+      )}
+
+      {monorepoRoot && (
+        <div style={styles.note}>
+          Lưu ý: <code>stor-web</code> dùng <code>.git</code> ở <strong>root new-frontend</strong>{' '}
+          (monorepo) — checkout/pull tác động <strong>cả monorepo</strong>, không chỉ apps/stor-web.
+        </div>
+      )}
+
+      <div style={styles.row}>
+        <button type="button" onClick={onFetch} disabled={anyBusy}>
+          {busy === 'fetch' ? 'Fetching…' : 'Fetch (--all --prune)'}
+        </button>
+      </div>
+
+      <div style={styles.row}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+          Branch:
+          <select
+            value={chosen}
+            onChange={(e) => setChosen(e.target.value)}
+            disabled={anyBusy || branches.length === 0}
+            style={{ flex: 1, minWidth: 0 }}
+          >
+            {branches.length === 0 && <option value="">(không có branch)</option>}
+            {branches.map((b) => (
+              <option key={b.name} value={b.name}>
+                {b.isRemote ? `${b.name} (remote)` : b.name}
+                {b.isCurrent ? ' — current' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div style={styles.row}>
+        <button
+          type="button"
+          onClick={onCheckout}
+          disabled={anyBusy || dirty || !chosen || chosen === current}
+          title={dirty ? 'Bị chặn: working tree dirty' : undefined}
+        >
+          {busy === 'checkout' ? 'Checking out…' : 'Checkout'}
+        </button>
+        <button
+          type="button"
+          onClick={onPull}
+          disabled={anyBusy || dirty}
+          title={dirty ? 'Bị chặn: working tree dirty' : undefined}
+        >
+          {busy === 'pull' ? 'Pulling…' : 'Pull'}
+        </button>
+      </div>
+
+      {notice && <pre style={styles.notice}>{notice}</pre>}
+    </section>
+  );
+}
+
+const styles = {
+  panel: {
+    border: '1px solid #ddd',
+    borderRadius: 6,
+    padding: '0.75rem 1rem',
+  },
+  row: {
+    display: 'flex',
+    gap: '0.5rem',
+    alignItems: 'center',
+    marginBottom: '0.6rem',
+  },
+  error: {
+    color: '#b00020',
+    background: '#fde7e9',
+    padding: '0.4rem 0.6rem',
+    borderRadius: 4,
+    margin: '0 0 0.5rem',
+  },
+  warn: {
+    color: '#7a4d00',
+    background: '#fff4ce',
+    border: '1px solid #f2d98c',
+    padding: '0.5rem 0.6rem',
+    borderRadius: 4,
+    margin: '0 0 0.6rem',
+    fontSize: '0.9rem',
+  },
+  note: {
+    color: '#3a3a6a',
+    background: '#eef1fb',
+    border: '1px solid #c9d2f0',
+    padding: '0.5rem 0.6rem',
+    borderRadius: 4,
+    margin: '0 0 0.6rem',
+    fontSize: '0.85rem',
+  },
+  notice: {
+    background: '#f3f3f3',
+    border: '1px solid #e0e0e0',
+    borderRadius: 4,
+    padding: '0.5rem 0.6rem',
+    margin: 0,
+    whiteSpace: 'pre-wrap',
+    fontSize: '0.85rem',
+    maxHeight: 160,
+    overflow: 'auto',
+  },
+};
