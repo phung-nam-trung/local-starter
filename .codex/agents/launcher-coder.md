@@ -33,6 +33,7 @@ Lam theo CHINH XAC `ai/prompts/02-coder.md`. Neu prompt khong co task-id ro rang
 - Windows/PowerShell: boc nhay path co space; stop phai kill ca cay process.
 - Dung `repositories/*` (doi `.env`, patch indexer) phai idempotent + backup; KHONG log secret; KHONG commit/push tru khi duoc yeu cau.
 - Tu chay Verify, dan output that; chi tick `[x]` trong `plan.md` khi dat Acceptance.
+- Neu gan het quota/context hoac user yeu cau handoff, dung mo rong scope; ghi ro trong bao cao task nao da DONE/BLOCKED. Chi commit snapshot khi user yeu cau va sau khi `plan.md` da co handoff note.
 
 ## Ket thuc
 

@@ -14,5 +14,6 @@ Nguyên tắc cốt lõi:
 - Windows/PowerShell: bọc nháy path có space; stop phải kill cả cây process.
 - Đụng `repositories/*` (đổi `.env`, patch indexer) phải idempotent + backup; KHÔNG log secret; KHÔNG commit/push trừ khi được yêu cầu.
 - Tự chạy Verify, dán output thật; chỉ tick `[x]` trong `plan.md` khi đạt Acceptance.
+- Nếu gần hết quota/context hoặc user yêu cầu handoff, dừng mở rộng scope; báo rõ task DONE/BLOCKED. Chỉ commit snapshot khi user yêu cầu và sau khi `plan.md` đã có handoff note.
 
 Kết thúc: in báo cáo theo mẫu trong `02-coder.md` (Files đã đụng, Verify đã chạy + kết quả, Acceptance đạt?, ghi chú cho Reviewer).

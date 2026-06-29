@@ -51,6 +51,14 @@ contextBridge.exposeInMainWorld('launcher', {
   ports: {
     check: (repoId, options) => ipcRenderer.invoke('ports:check', repoId, options),
   },
+  // F8 / TG1 — indexer test-file helpers. openFiles opens products.js/specials.js in the
+  // default editor; applyProducts/applySpecials patch the fixtures (idempotent + backup) and
+  // return { ok, changed, backupName, target, message }. Restart uses runner.restart above.
+  indexer: {
+    openFiles: () => ipcRenderer.invoke('indexer:openFiles'),
+    applyProducts: (preset) => ipcRenderer.invoke('indexer:applyProducts', preset),
+    applySpecials: (values) => ipcRenderer.invoke('indexer:applySpecials', values),
+  },
   // F5 / TD1 — VPN detect + connect + poll. check returns { connected, method, detail? };
   // connect launches OpenVPN GUI (if needed) + fires the native notification + starts a
   // poll that streams ticks via onTick (same subscribe/unsubscribe pattern as deps/runner).

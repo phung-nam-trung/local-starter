@@ -33,6 +33,7 @@ Lam theo CHINH XAC `ai/prompts/03-reviewer.md`. Neu prompt khong co task-id ro r
 - Soi rang buoc CONTEXT: path/lenh/port, `.env` an toan, indexer + restart, VPN detect+poll, kill cay process & giai phong port.
 - Tu duy doi khang: branch khong ton tai, install fail, VPN chua len, port ban, stop giua luc build.
 - KHONG sua code, KHONG tick task, KHONG commit/push.
+- Khi review handoff, khong tin checkbox `[x]` neu thieu bang chung Verify/Reviewer PASS. Neu task da tick nhung chua co bang chung, ghi ro la can review lai trong findings.
 
 ## Ket thuc
 

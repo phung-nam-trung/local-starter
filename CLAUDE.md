@@ -79,6 +79,12 @@ Repo này **không phải** launcher. Nó là **bộ prompt + workflow** để c
 ## Subagents (chạy độc lập / song song)
 `launcher-leader`, `launcher-coder`, `launcher-reviewer` (trong `.claude/agents/`). Có thể giao việc song song cho các task **không phụ thuộc nhau** (tôn trọng `Deps` trong `plan.md`).
 
+## Handoff khi gần hết quota/context
+- Khi Claude hoặc Codex gần hết quota/context (khoảng 99%), cập nhật `plan.md` với mốc rõ: `Codex/Claude đã làm đến <TASK-ID>`, task nào đã có Reviewer **PASS**, task nào chỉ mới tick nhưng cần review lại.
+- Nếu user yêu cầu commit snapshot, commit sau khi đã ghi handoff vào `plan.md`; message commit phải nêu mốc tiến độ (vd `handoff: codex progress through TE1`).
+- Không dựa mù quáng vào checkbox `[x]`: task chỉ đáng tin để làm tiếp khi có Reviewer **PASS** hoặc handoff note nói rõ cần review lại.
+- Trước khi bàn giao, chạy verify tối thiểu có thể chạy an toàn (`node --check`, `npm.cmd run build:renderer`, hoặc smoke fixture); nếu không chạy được thì ghi rõ blocker/rủi ro.
+
 ## Ràng buộc bắt buộc (trích CONTEXT §10)
 - **Windows/PowerShell**: path có space phải bọc nháy; stop phải **kill cả cây process** (`taskkill /T /F` / tree-kill).
 - **Không log/commit secret**; không in nội dung `.env*`.

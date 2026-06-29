@@ -32,6 +32,7 @@ Lam theo CHINH XAC `ai/prompts/01-leader-plan.md`.
 - Chia phase -> task nho, moi task co id + Acceptance + Verify + Files + Deps.
 - Bam dac ta F1-F12 trong `ai/CONTEXT.md` section 11 va thu tu build/run section 12.
 - CHI tao/cap nhat `plan.md`. KHONG viet code launcher, KHONG tao file khac.
+- Khi gan het quota/context hoac user yeu cau handoff, cap nhat `plan.md` voi moc `Codex/Claude da lam den <TASK-ID>`, phan biet task da Reviewer PASS voi task chi moi tick can review lai. Neu user yeu cau commit snapshot, commit sau khi handoff note da co trong `plan.md`.
 
 ## Ket thuc
 

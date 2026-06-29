@@ -84,9 +84,14 @@ export default function VpnStatus() {
       }
       setSkipped(false);
       setPolling(Boolean(res.polling));
-      const parts = [];
-      if (res.launch && res.launch.launched) parts.push('Opened OpenVPN GUI.');
-      else if (res.launch && !res.launch.launched) parts.push('OpenVPN GUI already running.');
+      const parts = ['H\u00e3y \u0111\u0103ng nh\u1eadp VPN.'];
+      if (res.launch && res.launch.ok === false) {
+        parts.push(`OpenVPN GUI failed: ${res.launch.message || 'unknown error'}.`);
+      } else if (res.launch && res.launch.launched) {
+        parts.push('Opened OpenVPN GUI.');
+      } else if (res.launch && !res.launch.launched) {
+        parts.push('OpenVPN GUI already running.');
+      }
       if (res.notified) parts.push('Notification sent.');
       parts.push('Polling for connection...');
       setNotice(parts.join(' '));

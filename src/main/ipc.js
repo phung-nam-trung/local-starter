@@ -8,6 +8,7 @@ const env = require('./orchestrator/env');
 const runner = require('./orchestrator/runner');
 const ports = require('./orchestrator/ports');
 const vpn = require('./orchestrator/vpn');
+const indexer = require('./orchestrator/indexer');
 
 // VPN (TD1) — at most ONE poll runs at a time. We keep its cancel() handle so vpn:cancel
 // (and a fresh vpn:connect) can stop the previous poll. The poll handle lives in main (not
@@ -84,6 +85,19 @@ function setupIpc() {
     ports.checkRepoPort(repoId, { port: options.port })
   );
 
+  // Indexer edits (F8 / TG1). Patch the indexer test fixtures (idempotent + backup) or open
+  // them in the default editor. Restart goes through runner:restart (already wired above).
+  // Inputs come from the renderer; results are plain serializable objects and never throw.
+  // We never forward opts.filePath/opts.dir/opts.opener from the renderer — those are
+  // TEST-ONLY hooks; the IPC layer always targets the real registry path.
+  ipcMain.handle('indexer:openFiles', () => indexer.openTestFiles());
+  ipcMain.handle('indexer:applyProducts', (_event, preset = {}) =>
+    indexer.applyProductsPreset({ retailerId: preset.retailerId, productIds: preset.productIds })
+  );
+  ipcMain.handle('indexer:applySpecials', (_event, values = {}) =>
+    indexer.applySpecialsConfig({ retailer: values.retailer, special: values.special })
+  );
+
   // VPN handlers (F5 / TD1). All config (probeHost/probePort/exePath) comes from the
   // renderer — nothing is hardcoded. The native "Hãy đăng nhập VPN" Notification is fired
   // HERE (needs electron), not in vpn.js. Poll ticks stream back via vpn:tick.
@@ -117,9 +131,20 @@ function setupIpc() {
     let launch = null;
     const running = await vpn.isOpenVpnGuiRunning();
     if (!running) {
-      launch = vpn.launchOpenVpnGui(config.exePath);
+      launch = await vpn.launchOpenVpnGui(config.exePath);
     } else {
       launch = { ok: true, launched: false, message: 'OpenVPN GUI is already running.' };
+    }
+    if (launch && launch.ok === false) {
+      return {
+        ok: false,
+        alreadyConnected: false,
+        launch,
+        notified: false,
+        polling: false,
+        method: initial.method,
+        message: launch.message,
+      };
     }
 
     // Native notification — guard with isSupported() so headless/unsupported hosts are safe.

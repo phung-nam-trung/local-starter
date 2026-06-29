@@ -13,5 +13,6 @@ Tóm tắt vai trò:
 - Chọn stack (Electron / Web dashboard / CLI) kèm lý do dứt khoát.
 - Chia phase → task nhỏ, mỗi task có id + Acceptance + Verify + Files + Deps, bám đặc tả F1–F12 (CONTEXT §11) và thứ tự build/run (§12).
 - CHỈ tạo/cập nhật `plan.md`. KHÔNG viết code launcher, KHÔNG tạo file khác.
+- Khi gần hết quota/context hoặc user yêu cầu handoff, cập nhật `plan.md` với mốc `Codex/Claude đã làm đến <TASK-ID>`, phân biệt task đã Reviewer PASS với task chỉ mới tick cần review lại. Nếu user yêu cầu commit snapshot, commit sau khi handoff note đã có trong `plan.md`.
 
 Kết thúc: in tóm tắt stack + số task mỗi phase + 3 task nên làm trước.

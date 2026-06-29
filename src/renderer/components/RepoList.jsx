@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import BranchPicker from './BranchPicker.jsx';
 import DepsPanel from './DepsPanel.jsx';
 import EnvSelector from './EnvSelector.jsx';
+import IndexerPanel from './IndexerPanel.jsx';
 import RunControls from './RunControls.jsx';
 import VpnStatus from './VpnStatus.jsx';
 
@@ -169,6 +170,8 @@ export default function RepoList() {
         <BranchPicker repo={activeRepo} />
         <DepsPanel repo={activeRepo} />
         <RunControls repo={activeRepo} />
+        {/* TG1 — indexer-only edits + restart; the panel self-hides for other repos. */}
+        <IndexerPanel repo={activeRepo} />
       </div>
     </section>
   );

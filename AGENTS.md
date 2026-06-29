@@ -86,6 +86,12 @@ Nếu môi trường Codex không tự nạp `.codex/agents`, paste nội dung f
 - `launcher-reviewer`: spawn dạng `explorer`, không sửa code; có thể review song song các task độc lập đã code xong.
 - Để tối ưu quota Codex hiện có: không override model/reasoning/service tier trừ khi user yêu cầu rõ; để agent tự đọc `ai/CONTEXT.md`, `plan.md`, và prompt nguồn thay vì nhồi toàn bộ ngữ cảnh hội thoại.
 
+## Handoff khi gần hết quota
+- Khi Codex/Claude gần hết quota hoặc context (khoảng 99%), PHẢI cập nhật `plan.md` với mục handoff ngắn: `Codex/Claude đã làm đến <TASK-ID>`, task nào đã có Reviewer `PASS`, task nào chỉ mới tick nhưng cần review lại.
+- Nếu user yêu cầu commit snapshot, commit sau khi đã ghi handoff vào `plan.md`; message commit phải nêu mốc tiến độ (vd `handoff: codex progress through TE1`).
+- Không tin checkbox `[x]` một cách mù quáng: task chỉ được coi là sẵn sàng để agent kế tiếp dựa vào khi có báo cáo Reviewer `PASS` hoặc handoff note nói rõ cần review lại.
+- Trước khi bàn giao cho agent khác, chạy verify tối thiểu có thể chạy an toàn (`node --check`, `npm.cmd run build:renderer`, hoặc smoke temp fixture); nếu không chạy được thì ghi blocker/rủi ro vào `plan.md`.
+
 ## Ràng buộc bắt buộc (trích CONTEXT §10)
 - **Windows/PowerShell**: path có space bọc nháy; stop phải **kill cả cây process** (`taskkill /T /F` hoặc tương đương).
 - **Không** in/log/commit secret; không in nội dung `.env*`.

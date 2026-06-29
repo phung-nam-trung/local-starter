@@ -24,6 +24,7 @@
 // Nothing here logs secrets (we never print the probe host's traffic or .env contents).
 
 const net = require('node:net');
+const fs = require('node:fs');
 const { execFile, spawn } = require('node:child_process');
 
 const isWin = process.platform === 'win32';
@@ -138,7 +139,8 @@ function detectAdapter(execFileImpl = execFile) {
 //   _execFile  : TEST-ONLY hook to inject a fake execFile for the adapter fallback.
 // When a probe host+port is configured we use the TCP probe (method:'probe'). Otherwise we
 // fall back to the adapter check (method:'adapter'). If neither is possible the result is
-// connected:false, method:'none'.
+// connected:false, method:'none'. A configured TCP probe is authoritative: if it fails,
+// adapter state must not override it.
 async function isVpnConnected(config = {}) {
   const host = config.probeHost;
   const port = config.probePort;
@@ -146,12 +148,18 @@ async function isVpnConnected(config = {}) {
 
   if (hasProbe) {
     const connected = await probe(host, port, config.timeoutMs);
+    if (connected) {
+      return {
+        connected: true,
+        method: 'probe',
+        detail: `reached ${host}:${port}`,
+      };
+    }
+
     return {
-      connected,
+      connected: false,
       method: 'probe',
-      detail: connected
-        ? `reached ${host}:${port}`
-        : `cannot reach ${host}:${port}`,
+      detail: `cannot reach ${host}:${port}`,
     };
   }
 
@@ -193,7 +201,7 @@ function isOpenVpnGuiRunning(execFileImpl = execFile) {
   });
 }
 
-// launchOpenVpnGui(exePath, spawnImpl) -> { ok, launched, message, exePath }
+// launchOpenVpnGui(exePath, spawnImpl) -> Promise<{ ok, launched, message, exePath }>
 // Spawns openvpn-gui.exe DETACHED (so it outlives the launcher) and unref's it. Only call
 // when the VPN is down AND the GUI is not already running. `exePath` defaults to CONTEXT §9
 // but is overridable. `spawnImpl` is a TEST-ONLY hook so tests can verify the path/args
@@ -202,30 +210,89 @@ function isOpenVpnGuiRunning(execFileImpl = execFile) {
 // Note: openvpn-gui.exe with no args just opens/brings up its tray UI (no auto-connect,
 // since the config dir is empty) — exactly the "open GUI so the user can log in" behaviour
 // CONTEXT §9 step 2 asks for.
+function validateOpenVpnGuiPath(target) {
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) {
+      return { ok: false, message: `OpenVPN GUI path is not a file: ${target}` };
+    }
+  } catch (err) {
+    const reason = err && err.code === 'ENOENT' ? 'not found' : 'not accessible';
+    return { ok: false, message: `OpenVPN GUI executable ${reason}: ${target}` };
+  }
+  return { ok: true };
+}
+
 function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
   const target = exePath || DEFAULT_OPENVPN_GUI;
-  try {
-    const child = spawnImpl(target, [], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false, // it's a GUI app; let it show its window/tray.
-    });
-    if (child && typeof child.unref === 'function') child.unref();
-    return {
-      ok: true,
-      launched: true,
-      exePath: target,
-      pid: child ? child.pid : null,
-      message: `Launched OpenVPN GUI (${target}).`,
-    };
-  } catch (err) {
-    return {
+  const pathStatus = validateOpenVpnGuiPath(target);
+  if (!pathStatus.ok) {
+    return Promise.resolve({
       ok: false,
       launched: false,
       exePath: target,
-      message: (err && err.message) || String(err),
-    };
+      message: pathStatus.message,
+    });
   }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    let child;
+    try {
+      child = spawnImpl(target, [], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false, // it's a GUI app; let it show its window/tray.
+      });
+    } catch (err) {
+      settle({
+        ok: false,
+        launched: false,
+        exePath: target,
+        message: (err && err.message) || String(err),
+      });
+      return;
+    }
+
+    const success = () => {
+      try {
+        if (child && typeof child.unref === 'function') child.unref();
+      } catch (_err) {
+        // ignore
+      }
+      settle({
+        ok: true,
+        launched: true,
+        exePath: target,
+        pid: child ? child.pid : null,
+        message: `Launched OpenVPN GUI (${target}).`,
+      });
+    };
+
+    const fail = (err) => {
+      settle({
+        ok: false,
+        launched: false,
+        exePath: target,
+        message: (err && err.message) || String(err),
+      });
+    };
+
+    if (child && typeof child.once === 'function') {
+      child.once('error', fail);
+      child.once('spawn', success);
+      return;
+    }
+
+    // Compatibility path for simple test doubles that mimic only pid/unref.
+    success();
+  });
 }
 
 // waitForConnection(config, opts) -> { promise, cancel }
