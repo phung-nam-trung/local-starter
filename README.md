@@ -36,12 +36,14 @@ local-starter/
 │   │   └── 03-reviewer.md     ← prompt Reviewer (1 task)
 │   └── templates/
 │       └── plan.template.md   ← khung plan.md
-└── .claude/
+├── .claude/
     ├── commands/              ← /launcher-plan, /launcher-code, /launcher-review
+    └── agents/                ← launcher-leader, launcher-coder, launcher-reviewer
+└── .codex/
     └── agents/                ← launcher-leader, launcher-coder, launcher-reviewer
 ```
 
-**Một nguồn sự thật:** nội dung thật nằm ở `ai/CONTEXT.md` + `ai/prompts/*`. Các file `CLAUDE.md`, `AGENTS.md`, `.claude/*` chỉ trỏ tới chúng — sửa thì sửa ở `ai/`.
+**Một nguồn sự thật:** nội dung thật nằm ở `ai/CONTEXT.md` + `ai/prompts/*`. Các file `CLAUDE.md`, `AGENTS.md`, `.claude/*`, `.codex/*` chỉ trỏ tới chúng — sửa thì sửa ở `ai/`.
 
 ## Dùng với Claude Code
 
@@ -58,18 +60,22 @@ Có thể giao **subagent** chạy song song cho các task không phụ thuộc 
 
 ## Dùng với Codex
 
-Codex tự đọc `AGENTS.md`. Vì không có slash command, bạn **paste prompt**:
+Codex tự đọc `AGENTS.md`. Cách khuyến nghị là dùng sub-agent specs trong `.codex/agents/`:
 
-1. Paste toàn bộ `ai/prompts/01-leader-plan.md` → Codex sinh `plan.md`.
-2. Paste `ai/prompts/02-coder.md`, thay `<TASK-ID>` → làm task.
-3. Paste `ai/prompts/03-reviewer.md`, thay `<TASK-ID>` → review.
+1. `launcher-leader` → sinh `plan.md`.
+2. `launcher-coder <TASK-ID>` → làm đúng một task.
+3. `launcher-reviewer <TASK-ID>` → review task, ra PASS/FAIL.
 4. Lặp tới Definition of Done.
+
+Để tiết kiệm quota/ngữ cảnh: các spec Codex yêu cầu sub-agent tự đọc `ai/CONTEXT.md`, `plan.md`, và prompt nguồn; không cần fork toàn bộ hội thoại, không override model trừ khi bạn yêu cầu rõ. Có thể chạy song song nhiều `launcher-coder` chỉ khi task không phụ thuộc nhau và không đụng cùng file; reviewer chỉ chạy sau khi coder báo DONE.
+
+Fallback nếu môi trường Codex không tự nạp `.codex/agents`: paste trực tiếp `ai/prompts/01-leader-plan.md`, `ai/prompts/02-coder.md` hoặc `ai/prompts/03-reviewer.md` như trước.
 
 ## Bắt đầu nhanh
 
 1. Mở `local-starter/` bằng Claude Code (hoặc Codex).
-2. (Khuyến nghị) đọc lướt `ai/CONTEXT.md` để biết pack đã nắm gì về 10 repo của bạn.
-3. Chạy `/launcher-plan` (Claude) hoặc paste `01-leader-plan.md` (Codex).
+2. (Khuyến nghị) đọc lướt `ai/CONTEXT.md` để biết pack đã nắm gì về 9 repo của bạn.
+3. Chạy `/launcher-plan` (Claude) hoặc dùng `launcher-leader` (Codex).
 4. Mở `plan.md`, bắt đầu vòng Coder ↔ Reviewer.
 
 ## Hai workspace được launcher quản lý
@@ -85,4 +91,4 @@ Chi tiết 9 repo, port, env, VPN, indexer… xem `ai/CONTEXT.md`.
 
 - Repo/lệnh/port đổi → sửa **`ai/CONTEXT.md`**.
 - Quy trình/khung kế hoạch đổi → sửa `ai/prompts/*` hoặc `ai/templates/plan.template.md`.
-- Không cần sửa `CLAUDE.md`/`AGENTS.md`/`.claude/*` (chỉ là wrapper trỏ tới `ai/`).
+- Không cần sửa `CLAUDE.md`/`AGENTS.md`/`.claude/*`/`.codex/*` (chỉ là wrapper trỏ tới `ai/`).

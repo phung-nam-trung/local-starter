@@ -72,11 +72,19 @@ Repo này **không phải** launcher mà là **bộ prompt/workflow** để xây
 - **`ai/CONTEXT.md`** — nguồn sự thật duy nhất: 9 repo + đường dẫn + lệnh install/build/run + port & xung đột + `.env` selfpointrest + VPN + indexer + branch mặc định + đặc tả tính năng F1–F12. LUÔN đọc trước khi làm bất cứ gì.
 - `ai/templates/plan.template.md` — khung của `plan.md`.
 
-## Quy trình cho Codex (không có slash command → paste prompt)
-1. **Plan:** paste toàn bộ `ai/prompts/01-leader-plan.md` → Codex verify README/`package.json` thực tế → chọn stack → ghi **`plan.md`**.
-2. **Code:** paste `ai/prompts/02-coder.md`, thay `<TASK-ID>` bằng id task (vd `TA1`) → làm đúng 1 task → tick `[x]` trong `plan.md`.
-3. **Review:** paste `ai/prompts/03-reviewer.md`, thay `<TASK-ID>` → ra **PASS/FAIL**. FAIL → quay lại bước 2 tới khi PASS.
+## Quy trình cho Codex
+1. **Plan:** dùng sub-agent `launcher-leader` (spec: `.codex/agents/launcher-leader.md`) → verify README/`package.json` thực tế → chọn stack → ghi **`plan.md`**.
+2. **Code:** dùng sub-agent `launcher-coder` với `<TASK-ID>` (vd `TA1`) → làm đúng 1 task → tick `[x]` trong `plan.md`.
+3. **Review:** dùng sub-agent `launcher-reviewer` với `<TASK-ID>` → ra **PASS/FAIL**. FAIL → quay lại bước 2 tới khi PASS.
 4. Lặp 2–3 theo "Thứ tự thực thi đề xuất" trong `plan.md`.
+
+Nếu môi trường Codex không tự nạp `.codex/agents`, paste nội dung file agent tương ứng vào prompt sub-agent.
+
+## Codex sub-agents & quota
+- `launcher-leader`: spawn dạng `worker`, không fork toàn bộ hội thoại, chỉ được ghi `plan.md`.
+- `launcher-coder`: spawn dạng `worker`, 1 task/sub-agent; chỉ chạy song song khi `Deps` đã xong và write-set không trùng nhau.
+- `launcher-reviewer`: spawn dạng `explorer`, không sửa code; có thể review song song các task độc lập đã code xong.
+- Để tối ưu quota Codex hiện có: không override model/reasoning/service tier trừ khi user yêu cầu rõ; để agent tự đọc `ai/CONTEXT.md`, `plan.md`, và prompt nguồn thay vì nhồi toàn bộ ngữ cảnh hội thoại.
 
 ## Ràng buộc bắt buộc (trích CONTEXT §10)
 - **Windows/PowerShell**: path có space bọc nháy; stop phải **kill cả cây process** (`taskkill /T /F` hoặc tương đương).
