@@ -88,14 +88,17 @@ export default function RunControls({ repo }) {
 
   const state = status ? status.state : 'stopped';
   const running = state === 'running' || state === 'building' || state === 'starting';
+  // TF2 — start refused because the effective port is already taken (no process was spawned).
+  const portBusy = Boolean(result && !result.ok && result.reason === 'port-busy');
 
-  async function onStart() {
+  async function onStart(force = false) {
     setBusy('start');
     setError(null);
     setResult(null);
     setLog('');
     try {
       const options = isSelfpointrest ? { buildUIs } : {};
+      if (force) options.force = true;
       const res = await window.launcher.runner.start(repo.id, options);
       setResult(res);
       if (res && res.status) setStatus(res.status);
@@ -207,7 +210,7 @@ export default function RunControls({ repo }) {
       )}
 
       <div style={styles.row}>
-        <button type="button" onClick={onStart} disabled={anyBusy || running || buildOnly}>
+        <button type="button" onClick={() => onStart(false)} disabled={anyBusy || running || buildOnly}>
           {busy === 'start' ? 'Starting...' : 'Build & Start'}
         </button>
         <button type="button" onClick={onStop} disabled={anyBusy || !running}>
@@ -218,7 +221,22 @@ export default function RunControls({ repo }) {
         </button>
       </div>
 
-      {result && (
+      {portBusy && (
+        <div style={styles.warn}>
+          <strong>Port {result.port} dang ban</strong>
+          {result.heldBy && result.heldBy !== repo.id ? (
+            <> (co the dang bi giu boi <code>{result.heldBy}</code>)</>
+          ) : null}
+          . Stop process dang giu port roi thu lai, hoac:
+          <div style={{ marginTop: '0.4rem' }}>
+            <button type="button" onClick={() => onStart(true)} disabled={anyBusy || running}>
+              Start anyway (force)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {result && !portBusy && (
         <div style={result.ok ? styles.notice : styles.error}>
           <strong>{result.ok ? 'OK' : 'Failed'}:</strong> {result.message}
         </div>
@@ -291,6 +309,15 @@ const styles = {
   notice: {
     color: '#107c10',
     background: '#edf7ed',
+    padding: '0.45rem 0.6rem',
+    borderRadius: 4,
+    margin: '0 0 0.6rem',
+    overflowWrap: 'anywhere',
+  },
+  warn: {
+    color: '#7a4d00',
+    background: '#fff4ce',
+    border: '1px solid #f1d27a',
     padding: '0.45rem 0.6rem',
     borderRadius: 4,
     margin: '0 0 0.6rem',

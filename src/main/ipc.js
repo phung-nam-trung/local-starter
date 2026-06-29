@@ -6,6 +6,7 @@ const git = require('./orchestrator/git');
 const deps = require('./orchestrator/deps');
 const env = require('./orchestrator/env');
 const runner = require('./orchestrator/runner');
+const ports = require('./orchestrator/ports');
 
 // Registers all IPC handlers. Called once from main.js after app is ready.
 // Keep channels narrow and return metadata only (the registry holds no secrets).
@@ -51,6 +52,7 @@ function setupIpc() {
       buildUIs: options.buildUIs,
       port: options.port,
       skipBuild: Boolean(options.skipBuild),
+      force: Boolean(options.force), // TF2 — bypass the pre-start port-busy guard.
       onOutput: (payload) => event.sender.send('runner:log', payload),
     })
   );
@@ -59,9 +61,16 @@ function setupIpc() {
       buildUIs: options.buildUIs,
       port: options.port,
       skipBuild: Boolean(options.skipBuild),
+      force: Boolean(options.force),
       onOutput: (payload) => event.sender.send('runner:log', payload),
     })
   );
+  // Port check (TF2). Lets the UI pre-flight a repo's effective port before Start and show
+  // who likely holds it. Returns { repoId, port, busy, heldBy } — plain serializable data.
+  ipcMain.handle('ports:check', (_event, repoId, options = {}) =>
+    ports.checkRepoPort(repoId, { port: options.port })
+  );
+
   ipcMain.handle('runner:stop', (_event, repoId) => runner.stop(repoId));
   ipcMain.handle('runner:status', (_event, repoId) => runner.getStatus(repoId));
   ipcMain.handle('runner:describe', (_event, repoId, options = {}) =>

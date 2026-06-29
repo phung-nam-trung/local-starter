@@ -47,4 +47,8 @@ contextBridge.exposeInMainWorld('launcher', {
       return () => ipcRenderer.removeListener('runner:log', listener);
     },
   },
+  // TF2 — pre-flight a repo's effective port. Returns { repoId, port, busy, heldBy }.
+  ports: {
+    check: (repoId, options) => ipcRenderer.invoke('ports:check', repoId, options),
+  },
 });

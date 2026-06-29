@@ -23,6 +23,7 @@
 
 const { spawn, execFile } = require('node:child_process');
 const { getRepo } = require('./repos');
+const { isPortBusy, repoForPort } = require('./ports');
 
 const isWin = process.platform === 'win32';
 
@@ -397,6 +398,31 @@ async function start(repoId, opts = {}) {
     entry.state = STATES.STOPPED;
     entry.step = null;
     return { ok: true, message: 'Build steps completed (no start step).', status: snapshot(entry, repo) };
+  }
+
+  // Pre-start port guard (TF2). Right before spawning the long-running server, refuse if its
+  // effective port is already taken — otherwise the dev server would just crash with
+  // EADDRINUSE after we report "started". Skipped when: the repo has no port (build-only),
+  // or opts.force is set (user chose to start anyway). restart() goes through stop() first,
+  // which frees the port, so a normal restart is never blocked by its own previous run.
+  if (port != null && !opts.force) {
+    const busy = await isPortBusy(port);
+    if (busy) {
+      // Don't leave the repo stuck in STARTING — nothing was spawned.
+      entry.state = STATES.STOPPED;
+      entry.step = null;
+      const holder = repoForPort(port);
+      const holderText =
+        holder && holder !== repoId ? ` (co the dang bi giu boi "${holder}")` : '';
+      return {
+        ok: false,
+        reason: 'port-busy',
+        port,
+        heldBy: holder,
+        message: `Port ${port} dang ban${holderText}. Stop process dang giu port, hoac Start anyway (force) de bo qua.`,
+        status: snapshot(entry, repo),
+      };
+    }
   }
 
   const res = spawnLongRunning(entry, repo, startStep, cwd, env, port, onOutput);
