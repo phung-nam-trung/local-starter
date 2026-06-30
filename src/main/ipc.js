@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { app, ipcMain, Notification } = require('electron');
+const { app, ipcMain, Notification, dialog } = require('electron');
 const repos = require('./orchestrator/repos');
 const git = require('./orchestrator/git');
 const deps = require('./orchestrator/deps');
@@ -18,6 +18,104 @@ const store = require('./orchestrator/store');
 const CONFIG_FILENAME = 'launcher-config.json';
 function configPath() {
   return path.join(app.getPath('userData'), CONFIG_FILENAME);
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function rootString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function pickWorkspaceRoots(input) {
+  const source = isPlainObject(input) && isPlainObject(input.workspaceRoots)
+    ? input.workspaceRoots
+    : input;
+  const roots = {};
+
+  if (!isPlainObject(source)) return roots;
+
+  if (hasOwn(source, 'spLocalWorkspace')) {
+    roots.spLocalWorkspace = rootString(source.spLocalWorkspace);
+  } else if (hasOwn(source, 'sp-local-workspace')) {
+    roots.spLocalWorkspace = rootString(source['sp-local-workspace']);
+  } else if (hasOwn(source, 'sp')) {
+    roots.spLocalWorkspace = rootString(source.sp);
+  }
+
+  if (hasOwn(source, 'newFrontend')) {
+    roots.newFrontend = rootString(source.newFrontend);
+  } else if (hasOwn(source, 'new-frontend')) {
+    roots.newFrontend = rootString(source['new-frontend']);
+  } else if (hasOwn(source, 'nf')) {
+    roots.newFrontend = rootString(source.nf);
+  }
+
+  return roots;
+}
+
+function loadConfigAndApplyRoots() {
+  const config = store.load(configPath());
+  repos.setWorkspaceRoots(config);
+  return config;
+}
+
+function workspaceRootStatus(config) {
+  const savedRoots = {
+    spLocalWorkspace: rootString(config.workspaceRoots && config.workspaceRoots.spLocalWorkspace),
+    newFrontend: rootString(config.workspaceRoots && config.workspaceRoots.newFrontend),
+  };
+  const resolved = repos.resolveWorkspaceRoots(config);
+  const roots = {
+    spLocalWorkspace: savedRoots.spLocalWorkspace || resolved['sp-local-workspace'],
+    newFrontend: savedRoots.newFrontend || resolved['new-frontend'],
+  };
+  const validation = {
+    spLocalWorkspace: store.validateRoot('sp', roots.spLocalWorkspace),
+    newFrontend: store.validateRoot('nf', roots.newFrontend),
+  };
+
+  return {
+    ok: true,
+    roots,
+    savedRoots,
+    configured: {
+      spLocalWorkspace: Boolean(savedRoots.spLocalWorkspace),
+      newFrontend: Boolean(savedRoots.newFrontend),
+    },
+    validation,
+    allValid: validation.spLocalWorkspace.valid && validation.newFrontend.valid,
+  };
+}
+
+function normalizeValidIncomingRoots(incoming) {
+  const normalized = {};
+  const validation = {};
+
+  if (hasOwn(incoming, 'spLocalWorkspace')) {
+    const dir = incoming.spLocalWorkspace;
+    validation.spLocalWorkspace = dir
+      ? store.validateRoot('sp', dir)
+      : { kind: 'sp', dir: '', valid: true, reason: null, message: 'cleared' };
+    if (!validation.spLocalWorkspace.valid) return { ok: false, validation };
+    normalized.spLocalWorkspace = validation.spLocalWorkspace.dir;
+  }
+
+  if (hasOwn(incoming, 'newFrontend')) {
+    const dir = incoming.newFrontend;
+    validation.newFrontend = dir
+      ? store.validateRoot('nf', dir)
+      : { kind: 'nf', dir: '', valid: true, reason: null, message: 'cleared' };
+    if (!validation.newFrontend.valid) return { ok: false, validation };
+    normalized.newFrontend = validation.newFrontend.dir;
+  }
+
+  return { ok: true, roots: normalized, validation };
 }
 
 // VPN (TD1) — at most ONE poll runs at a time. We keep its cancel() handle so vpn:cancel
@@ -38,7 +136,87 @@ function setupIpc() {
   // repos:list — renderer fetches the repo registry to render the repo list (F1 / TA2).
   // Spread into a fresh array of plain objects so the IPC structured-clone only sees
   // serializable data (the registry module also carries helper fns like getRepo).
-  ipcMain.handle('repos:list', () => repos.map((r) => ({ ...r })));
+  ipcMain.handle('repos:list', () => {
+    loadConfigAndApplyRoots();
+    return repos.map((r) => ({ ...r }));
+  });
+
+  ipcMain.handle('workspace:getRoots', () => {
+    const config = loadConfigAndApplyRoots();
+    return workspaceRootStatus(config);
+  });
+
+  ipcMain.handle('workspace:setRoots', (_event, rootsInput = {}) => {
+    try {
+      const incoming = pickWorkspaceRoots(rootsInput);
+      if (!Object.keys(incoming).length) {
+        return { ok: false, reason: 'invalid', message: 'workspaceRoots is required.' };
+      }
+
+      const validated = normalizeValidIncomingRoots(incoming);
+      if (!validated.ok) {
+        return {
+          ok: false,
+          reason: 'invalid-root',
+          validation: validated.validation,
+          current: workspaceRootStatus(loadConfigAndApplyRoots()),
+        };
+      }
+
+      const currentConfig = loadConfigAndApplyRoots();
+      const nextConfig = {
+        ...currentConfig,
+        workspaceRoots: {
+          ...currentConfig.workspaceRoots,
+          ...validated.roots,
+        },
+      };
+      const saveResult = store.save(configPath(), nextConfig);
+      if (!saveResult.ok) return saveResult;
+
+      const savedConfig = loadConfigAndApplyRoots();
+      const status = workspaceRootStatus(savedConfig);
+      return {
+        ...status,
+        saved: true,
+        validation: {
+          ...status.validation,
+          incoming: validated.validation,
+        },
+      };
+    } catch (err) {
+      return { ok: false, reason: 'error', message: (err && err.message) || String(err) };
+    }
+  });
+
+  ipcMain.handle('workspace:pickFolder', async (_event, options = {}) => {
+    try {
+      const kind = isPlainObject(options) ? options.kind : options;
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'Choose workspace root',
+      });
+
+      if (result.canceled || !result.filePaths || !result.filePaths.length) {
+        return { ok: true, canceled: true, path: null, validation: null };
+      }
+
+      const selectedPath = result.filePaths[0];
+      return {
+        ok: true,
+        canceled: false,
+        path: selectedPath,
+        validation: kind ? store.validateRoot(kind, selectedPath) : null,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        canceled: false,
+        reason: 'error',
+        message: (err && err.message) || String(err),
+      };
+    }
+  });
 
   // Git read-only handlers (F2/F3 groundwork — TB1). git.js already returns plain
   // serializable values (strings / arrays of plain objects), so they cross IPC as-is.
@@ -52,6 +230,23 @@ function setupIpc() {
   ipcMain.handle('git:fetch', (_event, repoId) => git.fetch(repoId));
   ipcMain.handle('git:checkout', (_event, repoId, branch) => git.checkout(repoId, branch));
   ipcMain.handle('git:pull', (_event, repoId) => git.pull(repoId));
+  ipcMain.handle('git:previewLocalChanges', (_event, repoId, options = {}) =>
+    git.previewLocalChanges(repoId, { includeClean: Boolean(options.includeClean) })
+  );
+  ipcMain.handle('git:resetTrackedChanges', (_event, repoId, confirmation = {}) =>
+    git.resetTrackedChanges(repoId, {
+      confirmed: confirmation.confirmed === true,
+      repoId: confirmation.repoId,
+      action: confirmation.action,
+    })
+  );
+  ipcMain.handle('git:discardAllLocalChanges', (_event, repoId, confirmation = {}) =>
+    git.discardAllLocalChanges(repoId, {
+      confirmed: confirmation.confirmed === true,
+      repoId: confirmation.repoId,
+      action: confirmation.action,
+    })
+  );
 
   // Dependency handlers (F4 / TC1). install streams stdout/stderr back to the same
   // renderer that requested it via deps:log, while the invoke result carries the final
@@ -232,12 +427,16 @@ function setupIpc() {
   // Config persistence (F12 / TI1). The renderer NEVER supplies the file path — it is always
   // resolved from userData here. load returns the merged config (defaults on missing/corrupt);
   // save validates the payload is an object, then writes it ({ ok } / { ok:false, reason }).
-  ipcMain.handle('config:load', () => store.load(configPath()));
+  ipcMain.handle('config:load', () => loadConfigAndApplyRoots());
   ipcMain.handle('config:save', (_event, config) => {
     if (!config || typeof config !== 'object' || Array.isArray(config)) {
       return { ok: false, reason: 'invalid', message: 'config must be an object.' };
     }
-    return store.save(configPath(), config);
+    const result = store.save(configPath(), config);
+    if (result.ok) {
+      loadConfigAndApplyRoots();
+    }
+    return result;
   });
 }
 

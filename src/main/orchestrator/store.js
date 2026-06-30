@@ -17,6 +17,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const ROOT_KINDS = {
+  sp: 'sp',
+  'sp-local-workspace': 'sp',
+  spLocalWorkspace: 'sp',
+  nf: 'nf',
+  'new-frontend': 'nf',
+  newFrontend: 'nf',
+};
+
 // Shape of a fresh config. Kept flat + JSON-serializable. Nested objects (branchByRepo,
 // portOverrideByRepo, vpn) are merged shallowly on load — see mergeConfig.
 const DEFAULT_CONFIG = {
@@ -25,11 +34,133 @@ const DEFAULT_CONFIG = {
   branchByRepo: {},
   env: 'prod',
   portOverrideByRepo: {},
+  workspaceRoots: { spLocalWorkspace: '', newFrontend: '' },
   vpn: { probeHost: '', probePort: null, exePath: '' },
 };
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function normalizeRootKind(kind) {
+  return ROOT_KINDS[kind] || null;
+}
+
+function statOrNull(targetPath) {
+  try {
+    return fs.statSync(targetPath);
+  } catch (_err) {
+    return null;
+  }
+}
+
+function isDirectory(targetPath) {
+  const stat = statOrNull(targetPath);
+  return Boolean(stat && stat.isDirectory());
+}
+
+function isFile(targetPath) {
+  const stat = statOrNull(targetPath);
+  return Boolean(stat && stat.isFile());
+}
+
+function validateSpRoot(rootDir) {
+  const markers = {
+    'servers/selfpointrest': isDirectory(path.join(rootDir, 'servers', 'selfpointrest')),
+    public: isDirectory(path.join(rootDir, 'public')),
+  };
+  const missing = Object.entries(markers)
+    .filter(([, exists]) => !exists)
+    .map(([marker]) => marker);
+
+  return {
+    valid: missing.length === 0,
+    markers,
+    missing,
+  };
+}
+
+function validateNfRoot(rootDir) {
+  const storWeb = isDirectory(path.join(rootDir, 'apps', 'stor-web'));
+  const nxJson = isFile(path.join(rootDir, 'nx.json'));
+  const pnpmLock = isFile(path.join(rootDir, 'pnpm-lock.yaml'));
+  const missing = [];
+
+  if (!storWeb) missing.push('apps/stor-web');
+  if (!nxJson && !pnpmLock) missing.push('nx.json or pnpm-lock.yaml');
+
+  return {
+    valid: storWeb && (nxJson || pnpmLock),
+    markers: {
+      'apps/stor-web': storWeb,
+      'nx.json': nxJson,
+      'pnpm-lock.yaml': pnpmLock,
+    },
+    missing,
+  };
+}
+
+function validateRoot(kind, dir) {
+  const normalizedKind = normalizeRootKind(kind);
+  const trimmedDir = nonEmptyString(dir) || '';
+
+  if (!normalizedKind) {
+    return {
+      kind,
+      dir: trimmedDir,
+      valid: false,
+      reason: 'invalid-kind',
+      message: 'kind must be sp or nf.',
+    };
+  }
+
+  if (!trimmedDir) {
+    return {
+      kind: normalizedKind,
+      dir: '',
+      valid: false,
+      reason: 'missing',
+      message: 'workspace root is missing.',
+    };
+  }
+
+  const absoluteDir = path.resolve(trimmedDir);
+  if (!isDirectory(absoluteDir)) {
+    return {
+      kind: normalizedKind,
+      dir: absoluteDir,
+      valid: false,
+      reason: 'missing',
+      message: 'workspace root does not exist or is not a directory.',
+    };
+  }
+
+  const markerCheck = normalizedKind === 'sp' ? validateSpRoot(absoluteDir) : validateNfRoot(absoluteDir);
+  if (!markerCheck.valid) {
+    return {
+      kind: normalizedKind,
+      dir: absoluteDir,
+      valid: false,
+      reason: 'missing-markers',
+      markers: markerCheck.markers,
+      missing: markerCheck.missing,
+      message: `missing required marker(s): ${markerCheck.missing.join(', ')}.`,
+    };
+  }
+
+  return {
+    kind: normalizedKind,
+    dir: absoluteDir,
+    valid: true,
+    reason: null,
+    markers: markerCheck.markers,
+    missing: [],
+    message: 'ok',
+  };
 }
 
 // Build a fresh defaults object every call so callers never share/mutate the same nested
@@ -41,6 +172,7 @@ function freshDefault() {
     branchByRepo: {},
     env: 'prod',
     portOverrideByRepo: {},
+    workspaceRoots: { ...DEFAULT_CONFIG.workspaceRoots },
     vpn: { ...DEFAULT_CONFIG.vpn },
   };
 }
@@ -59,6 +191,9 @@ function mergeConfig(loaded) {
   if (isPlainObject(loaded.branchByRepo)) base.branchByRepo = loaded.branchByRepo;
   if (loaded.env === 'prod' || loaded.env === 'test') base.env = loaded.env;
   if (isPlainObject(loaded.portOverrideByRepo)) base.portOverrideByRepo = loaded.portOverrideByRepo;
+  if (isPlainObject(loaded.workspaceRoots)) {
+    base.workspaceRoots = { ...base.workspaceRoots, ...loaded.workspaceRoots };
+  }
   if (isPlainObject(loaded.vpn)) base.vpn = { ...base.vpn, ...loaded.vpn };
 
   return base;
@@ -101,4 +236,5 @@ module.exports = {
   DEFAULT_CONFIG,
   load,
   save,
+  validateRoot,
 };

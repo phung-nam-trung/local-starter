@@ -54,6 +54,9 @@ KHUNG CHUẨN cho plan.md — Leader PHẢI xuất theo đúng cấu trúc này.
 - [ ] **TB1: <list/fetch/checkout/pull an toàn, preselect branch mặc định master / new-frontend-dev-prod>**
   - Acceptance: <...>
   - Verify: <...>
+- [ ] **TB2: <reset tracked changes về HEAD hoặc discard toàn bộ local changes khi user xác nhận để unblock checkout/pull>**
+  - Acceptance: <mặc định vẫn chặn dirty checkout/pull; có preview + confirm theo repo trước `git reset --hard HEAD` / `git clean -fd`; không in secret>
+  - Verify: <fixture git tạm với tracked + untracked changes; cancel không đổi gì; confirm reset/discard đúng phạm vi>
 
 ### Phase C — Dependencies (F4)
 - [ ] **TC1: <cài khi thiếu cho npm (sp-local-workspace) & pnpm root (new-frontend); xử lý postinstall + Husky>**

@@ -30,6 +30,36 @@ function pickDefault(branches, defaultBranch, current) {
   return branches[0].name;
 }
 
+function clipPreview(text) {
+  const value = text && text.trim() ? text.trim() : '(empty)';
+  const limit = 3000;
+  return value.length > limit ? `${value.slice(0, limit)}\n... (truncated)` : value;
+}
+
+function buildDestructiveConfirm(repo, actionName, preview, includeClean, monorepoRoot) {
+  const lines = [
+    `Repo: ${repo.name} (${repo.id})`,
+    `Action: ${actionName}`,
+    '',
+    'Preview: git status --short',
+    clipPreview(preview.statusShort),
+  ];
+
+  if (includeClean) {
+    lines.push('', 'Preview: git clean -fdn', clipPreview(preview.cleanPreview));
+  }
+
+  if (monorepoRoot) {
+    lines.push(
+      '',
+      'WARNING: stor-web uses the new-frontend monorepo root. This action affects the whole new-frontend worktree, not only apps/stor-web.'
+    );
+  }
+
+  lines.push('', 'Continue?');
+  return lines.join('\n');
+}
+
 export default function BranchPicker({ repo }) {
   const [branches, setBranches] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -142,6 +172,88 @@ export default function BranchPicker({ repo }) {
     }
   }
 
+  async function onResetTracked() {
+    setBusy('preview-reset');
+    setNotice(null);
+    setError(null);
+    try {
+      const preview = await window.launcher.git.previewLocalChanges(repo.id, { includeClean: false });
+      if (!preview.ok) {
+        setNotice(preview.message || 'Preview failed.');
+        return;
+      }
+
+      const confirmed = window.confirm(
+        buildDestructiveConfirm(
+          repo,
+          'Reset tracked changes to current HEAD (git reset --hard HEAD). Untracked files are left untouched.',
+          preview,
+          false,
+          monorepoRoot
+        )
+      );
+      if (!confirmed) {
+        setNotice('Reset tracked changes cancelled.');
+        return;
+      }
+
+      setBusy('reset-tracked');
+      const res = await window.launcher.git.resetTrackedChanges(repo.id, {
+        confirmed: true,
+        repoId: repo.id,
+        action: 'reset-tracked',
+      });
+      const after = res.statusAfter && res.statusAfter.trim() ? `\n\nStatus after:\n${res.statusAfter}` : '';
+      setNotice((res.message || (res.ok ? 'Tracked changes reset.' : 'Reset refused.')) + after);
+      await refresh(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDiscardAll() {
+    setBusy('preview-discard');
+    setNotice(null);
+    setError(null);
+    try {
+      const preview = await window.launcher.git.previewLocalChanges(repo.id, { includeClean: true });
+      if (!preview.ok) {
+        setNotice(preview.message || 'Preview failed.');
+        return;
+      }
+
+      const confirmed = window.confirm(
+        buildDestructiveConfirm(
+          repo,
+          'Discard ALL local changes (git reset --hard HEAD + git clean -fd). Removes untracked non-ignored files.',
+          preview,
+          true,
+          monorepoRoot
+        )
+      );
+      if (!confirmed) {
+        setNotice('Discard all local changes cancelled.');
+        return;
+      }
+
+      setBusy('discard-all');
+      const res = await window.launcher.git.discardAllLocalChanges(repo.id, {
+        confirmed: true,
+        repoId: repo.id,
+        action: 'discard-all',
+      });
+      const after = res.statusAfter && res.statusAfter.trim() ? `\n\nStatus after:\n${res.statusAfter}` : '';
+      setNotice((res.message || (res.ok ? 'Local changes discarded.' : 'Discard refused.')) + after);
+      await refresh(true);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const anyBusy = busy !== null || loading;
 
   return (
@@ -168,7 +280,8 @@ export default function BranchPicker({ repo }) {
       {dirty && (
         <div style={styles.warn}>
           Repo đang có thay đổi chưa commit. <strong>Checkout/Pull bị chặn</strong> để
-          không mất thay đổi — hãy commit hoặc stash thủ công rồi Fetch lại.
+          không mất thay đổi. Dùng các nút bên dưới chỉ khi bạn muốn bỏ thay đổi local sau
+          khi xem preview.
         </div>
       )}
 
@@ -176,6 +289,31 @@ export default function BranchPicker({ repo }) {
         <div style={styles.note}>
           Lưu ý: <code>stor-web</code> dùng <code>.git</code> ở <strong>root new-frontend</strong>{' '}
           (monorepo) — checkout/pull tác động <strong>cả monorepo</strong>, không chỉ apps/stor-web.
+        </div>
+      )}
+
+      {dirty && (
+        <div style={styles.destructive}>
+          <p style={{ margin: '0 0 0.5rem' }}>
+            Hành động destructive cần preview + confirm riêng cho repo này:
+          </p>
+          <div style={styles.row}>
+            <button type="button" onClick={onResetTracked} disabled={anyBusy} style={styles.dangerButton}>
+              {busy === 'preview-reset' || busy === 'reset-tracked'
+                ? 'Resetting…'
+                : 'Reset tracked changes'}
+            </button>
+            <button
+              type="button"
+              onClick={onDiscardAll}
+              disabled={anyBusy}
+              style={styles.dangerButton}
+            >
+              {busy === 'preview-discard' || busy === 'discard-all'
+                ? 'Discarding…'
+                : 'Discard all local changes'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -265,6 +403,19 @@ const styles = {
     borderRadius: 4,
     margin: '0 0 0.6rem',
     fontSize: '0.85rem',
+  },
+  destructive: {
+    color: '#5f1b1b',
+    background: '#fff1f1',
+    border: '1px solid #f0b5b5',
+    padding: '0.5rem 0.6rem',
+    borderRadius: 4,
+    margin: '0 0 0.6rem',
+    fontSize: '0.9rem',
+  },
+  dangerButton: {
+    borderColor: '#b00020',
+    color: '#b00020',
   },
   notice: {
     background: '#f3f3f3',

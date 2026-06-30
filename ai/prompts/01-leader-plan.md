@@ -20,7 +20,7 @@ So sánh ngắn gọn 3 phương án (**Electron** / **Web dashboard Node+browse
 > Gợi ý cân nhắc (không bắt buộc theo): Electron hợp nhất với yêu cầu "app + native notification + 1 cửa sổ quản lý"; Web dashboard nhẹ và dễ iterate; CLI đơn giản nhưng yếu về "thông báo/UX chọn branch". Hãy tự quyết dựa trên đánh đổi.
 
 ### Bước 2 — Thiết kế kiến trúc
-Mô tả ngắn: orchestrator quản lý process (spawn kèm `cwd`, lưu PID, **kill cả cây process** khi stop — xem CONTEXT §10.2), git layer, VPN layer, config store (F12), state model (stopped/installing/building/running/crashed).
+Mô tả ngắn: orchestrator quản lý process (spawn kèm `cwd`, lưu PID, **kill cả cây process** khi stop — xem CONTEXT §10.2), git layer (fetch/branch/dirty state + reset/discard local changes có xác nhận), VPN layer, config store (F12), state model (stopped/installing/building/running/crashed).
 
 ### Bước 3 — Chia phase & task
 Theo các phase trong template (Scaffold → Git/Branch → Deps → VPN → Env → Build/Run → Indexer/Restart → Stop/Status/Logs → Persist → Đóng gói). Mỗi task PHẢI:
@@ -28,6 +28,7 @@ Theo các phase trong template (Scaffold → Git/Branch → Deps → VPN → Env
 - Có **Acceptance** (đo được) và **Verify** (cách kiểm chứng cụ thể: lệnh gì, kỳ vọng gì).
 - Ghi **Files** dự kiến đụng và **Deps** (task phụ thuộc).
 - Bám sát đặc tả F1–F12 trong CONTEXT §11 và thứ tự build/run §12.
+- Riêng Phase B/Git phải có task hoặc acceptance rõ cho dirty working tree: mặc định chặn checkout/pull, nhưng cho user xác nhận `git reset --hard HEAD` hoặc discard local changes (`git reset --hard HEAD` + `git clean -fd`) để có thể pull code/checkout branch mới; phải có preview, confirm theo repo, và verify bằng fixture git tạm thay vì phá repo thật.
 
 ### Bước 4 — Hoàn thiện
 Điền **Definition of Done**, **Giả định & Rủi ro**, **Thứ tự thực thi đề xuất**.
@@ -36,7 +37,7 @@ Theo các phase trong template (Scaffold → Git/Branch → Deps → VPN → Env
 
 - Chỉ ghi ra **`plan.md`** ở thư mục `local-starter/`. Không tạo file khác, không viết code.
 - Bám sát sự thật trong CONTEXT; mọi lệnh build/run phải khớp repo thực tế (đã verify ở Bước 0).
-- Tôn trọng các "gotcha": đổi `.env` an toàn có backup, không log secret; xử lý trùng port 4000/9000; indexer cần sửa code + restart; VPN detect+poll; UI backend/frontend build-only do selfpointrest serve.
+- Tôn trọng các "gotcha": đổi `.env` an toàn có backup, không log secret; reset/discard local Git changes chỉ khi user xác nhận; xử lý trùng port 4000/9000; indexer cần sửa code + restart; VPN detect+poll; UI backend/frontend build-only do selfpointrest serve.
 - Plan phải để một Coder **không có ngữ cảnh hội thoại** vẫn làm được từng task chỉ nhờ đọc `plan.md` + `ai/CONTEXT.md`.
 - Viết bằng tiếng Việt (giữ thuật ngữ kỹ thuật/lệnh bằng English).
 

@@ -27,6 +27,12 @@ function repoCwd(repoId) {
   return repo.path;
 }
 
+async function repoRootCwd(repoId) {
+  const cwd = repoCwd(repoId);
+  const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
+  return root || cwd;
+}
+
 // Run `git <args>` in `cwd`, resolve trimmed stdout. Rejects with a readable message
 // (git missing from PATH, not a git repo, etc.) — never leaks half-baked output.
 function git(cwd, args) {
@@ -123,6 +129,135 @@ async function isClean(repoId) {
 // the Error thrown by git()). Never throws — callers get a result object either way.
 function errResult(err) {
   return { ok: false, reason: 'error', message: (err && err.message) || String(err) };
+}
+
+function confirmationOk(repoId, action, confirmation) {
+  return (
+    confirmation &&
+    confirmation.confirmed === true &&
+    confirmation.repoId === repoId &&
+    confirmation.action === action
+  );
+}
+
+// TB3 preview: show only git metadata (status lines / clean dry-run file names), never file
+// contents. For stor-web this runs at the new-frontend worktree root, so untracked files
+// outside apps/stor-web are visible before any destructive action.
+async function previewLocalChanges(repoId, options = {}) {
+  let cwd;
+  try {
+    cwd = await repoRootCwd(repoId);
+  } catch (err) {
+    if (err && err.message && err.message.startsWith('Unknown repoId:')) {
+      return { ok: false, reason: 'unknown-repo', message: err.message };
+    }
+    return errResult(err);
+  }
+
+  try {
+    const statusShort = (await git(cwd, ['status', '--short'])).trimEnd();
+    const includeClean = Boolean(options.includeClean);
+    const cleanPreview = includeClean
+      ? (await git(cwd, ['clean', '-fdn'])).trimEnd()
+      : '';
+    return {
+      ok: true,
+      repoId,
+      worktreeRoot: cwd,
+      statusShort,
+      cleanPreview,
+      cleanPreviewIncluded: includeClean,
+      isClean: statusShort.trim() === '',
+      message: statusShort.trim() ? 'Working tree has local changes.' : 'Working tree is clean.',
+    };
+  } catch (err) {
+    return errResult(err);
+  }
+}
+
+async function resetTrackedChanges(repoId, confirmation = {}) {
+  if (!confirmationOk(repoId, 'reset-tracked', confirmation)) {
+    return {
+      ok: false,
+      reason: 'confirmation-required',
+      message: 'Reset tracked changes requires explicit per-repo confirmation.',
+    };
+  }
+
+  let cwd;
+  try {
+    cwd = await repoRootCwd(repoId);
+  } catch (err) {
+    if (err && err.message && err.message.startsWith('Unknown repoId:')) {
+      return { ok: false, reason: 'unknown-repo', message: err.message };
+    }
+    return errResult(err);
+  }
+
+  try {
+    const preview = await previewLocalChanges(repoId, { includeClean: false });
+    if (!preview.ok) return preview;
+
+    await git(cwd, ['reset', '--hard', 'HEAD']);
+    const statusAfter = (await git(cwd, ['status', '--short'])).trimEnd();
+    return {
+      ok: true,
+      action: 'reset-tracked',
+      repoId,
+      worktreeRoot: cwd,
+      preview,
+      statusAfter,
+      clean: statusAfter.trim() === '',
+      message: statusAfter.trim()
+        ? 'Tracked changes reset to HEAD. Untracked files were left untouched.'
+        : 'Tracked changes reset to HEAD. Working tree is clean.',
+    };
+  } catch (err) {
+    return errResult(err);
+  }
+}
+
+async function discardAllLocalChanges(repoId, confirmation = {}) {
+  if (!confirmationOk(repoId, 'discard-all', confirmation)) {
+    return {
+      ok: false,
+      reason: 'confirmation-required',
+      message: 'Discard all local changes requires explicit per-repo confirmation.',
+    };
+  }
+
+  let cwd;
+  try {
+    cwd = await repoRootCwd(repoId);
+  } catch (err) {
+    if (err && err.message && err.message.startsWith('Unknown repoId:')) {
+      return { ok: false, reason: 'unknown-repo', message: err.message };
+    }
+    return errResult(err);
+  }
+
+  try {
+    const preview = await previewLocalChanges(repoId, { includeClean: true });
+    if (!preview.ok) return preview;
+
+    await git(cwd, ['reset', '--hard', 'HEAD']);
+    await git(cwd, ['clean', '-fd']);
+    const statusAfter = (await git(cwd, ['status', '--short'])).trimEnd();
+    return {
+      ok: true,
+      action: 'discard-all',
+      repoId,
+      worktreeRoot: cwd,
+      preview,
+      statusAfter,
+      clean: statusAfter.trim() === '',
+      message: statusAfter.trim()
+        ? 'Discard finished, but the working tree still has changes.'
+        : 'Discarded tracked and untracked non-ignored changes.',
+    };
+  } catch (err) {
+    return errResult(err);
+  }
 }
 
 // fetch(repoId) -> { ok, message } | { ok:false, reason:'error', message }
@@ -248,4 +383,14 @@ async function pull(repoId) {
   }
 }
 
-module.exports = { listBranches, currentBranch, isClean, fetch, checkout, pull };
+module.exports = {
+  listBranches,
+  currentBranch,
+  isClean,
+  previewLocalChanges,
+  resetTrackedChanges,
+  discardAllLocalChanges,
+  fetch,
+  checkout,
+  pull,
+};

@@ -71,8 +71,12 @@ Tất cả đường dẫn dưới đây tương đối so với `repositories/`
 1. `git fetch --all --prune`.
 2. Hiển thị danh sách branch (local + remote) cho user chọn; **preselect** branch mặc định ở trên.
 3. Nếu branch mặc định không tồn tại → KHÔNG fail, mà để user chọn từ danh sách thực tế (fallback picker).
-4. `git checkout <branch>` rồi `git pull` (chỉ khi working tree sạch — nếu có thay đổi local thì cảnh báo, không tự ý overwrite).
-5. ⚠️ Cẩn thận: launcher **chủ động sửa** một số file (đổi tên `.env`, code indexer §7). Phải xử lý để các sửa đổi này không chặn checkout/pull (vd dùng `git stash` có kiểm soát, hoặc cảnh báo user) — Leader cần thiết kế rõ.
+4. `git checkout <branch>` rồi `git pull` (mặc định chỉ khi working tree sạch — nếu có thay đổi local thì cảnh báo, không tự ý overwrite).
+5. Nếu working tree bẩn, launcher phải cho user chọn hành động rõ ràng trước khi checkout/pull:
+   - **Reset tracked changes về `HEAD` hiện tại:** chạy `git reset --hard HEAD` để bỏ thay đổi tracked/index, **không** reset về `origin/<branch>` và không đụng untracked files.
+   - **Discard toàn bộ local changes:** chạy `git reset --hard HEAD` + `git clean -fd` để bỏ tracked + untracked non-ignored files. Trước khi chạy phải hiển thị preview an toàn (`git status --short`, `git clean -fdn`), yêu cầu xác nhận theo từng repo, và không in nội dung file secret.
+   - Các hành động này **không được tự động chạy**; chỉ chạy khi user xác nhận vì có thể mất dữ liệu chưa commit.
+6. ⚠️ Cẩn thận: launcher **chủ động sửa** một số file (đổi tên `.env`, code indexer §7). Phải xử lý để các sửa đổi này không chặn checkout/pull (vd dùng `git stash` có kiểm soát, cảnh báo user, hoặc reset/discard có xác nhận) — Leader cần thiết kế rõ.
 
 ---
 
@@ -181,7 +185,7 @@ Launcher (bất kể stack nào) phải làm được:
 
 - [ ] **F1 — Chọn repo:** danh sách 9 repo (§3) có checkbox; chọn 1 hoặc nhiều để vận hành. Nhóm theo workspace.
 - [ ] **F2 — Chọn branch:** với mỗi repo đã chọn, hiển thị branch picker, preselect mặc định (§4), cho đổi branch.
-- [ ] **F3 — Fetch & Pull:** `git fetch --all --prune` + checkout + pull an toàn (§4), báo lỗi rõ ràng nếu working tree bẩn.
+- [ ] **F3 — Fetch & Pull:** `git fetch --all --prune` + checkout + pull an toàn (§4), báo lỗi rõ ràng nếu working tree bẩn; cho phép user xác nhận `reset --hard HEAD` hoặc discard local changes để unblock checkout/pull.
 - [ ] **F4 — Install deps:** cài **khi thiếu** (npm cho sp-local-workspace, pnpm ở root cho new-frontend), có nút ép cài lại; xử lý postinstall (gulp buildAll / bower) và Husky (§10).
 - [ ] **F5 — VPN:** detect → nếu chưa kết nối thì mở OpenVPN GUI + thông báo + poll tới khi kết nối (§9); cho bỏ qua nếu chỉ chạy UI.
 - [ ] **F6 — Env selfpointrest:** chọn prod/test (mặc định prod), copy → `.env` có backup, đảm bảo `clients_dir` (§5).

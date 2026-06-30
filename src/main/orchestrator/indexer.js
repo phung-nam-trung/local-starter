@@ -30,16 +30,14 @@
 const fs = require('node:fs/promises');
 const fsConstants = require('node:fs').constants;
 const path = require('node:path');
-const { spawn } = require('node:child_process');
 const { getRepo } = require('./repos');
+const { openPath } = require('./platform');
 const runner = require('./runner');
 
 const INDEXER_ID = 'indexer-queue-subscriber';
 const PRODUCTS_REL = path.join('test', 'products.js');
 const SPECIALS_REL = path.join('test', 'specials.js');
 const SPECIALS_CONFIG_REL = path.join('config', 'default.json');
-
-const isWin = process.platform === 'win32';
 
 function resolveIndexerDir(opts = {}) {
   if (opts.dir) return opts.dir;
@@ -364,27 +362,18 @@ async function applySpecialsConfig(values = {}, opts = {}) {
 // other platforms we fall back to open/xdg-open. Detached + unref so the editor outlives us.
 // opts.opener is a TEST hook: it receives the absolute path and returns a plain object instead
 // of spawning, so verification can assert the assembled command/paths without popping an editor.
-function defaultOpen(filePath) {
-  if (isWin) {
-    const child = spawn('cmd', ['/c', 'start', '""', filePath], {
-      windowsHide: true,
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.unref();
-    return { tool: 'cmd /c start', argv: ['/c', 'start', '""', filePath] };
-  }
-  const tool = process.platform === 'darwin' ? 'open' : 'xdg-open';
-  const child = spawn(tool, [filePath], { detached: true, stdio: 'ignore' });
-  child.unref();
-  return { tool, argv: [filePath] };
+function defaultOpen(filePath, opts = {}) {
+  return openPath(filePath, opts);
 }
 
 async function openTestFiles(opts = {}) {
   try {
     const dir = resolveIndexerDir(opts);
     const targets = [path.join(dir, PRODUCTS_REL), path.join(dir, SPECIALS_REL)];
-    const open = typeof opts.opener === 'function' ? opts.opener : defaultOpen;
+    const open =
+      typeof opts.opener === 'function'
+        ? opts.opener
+        : (filePath) => defaultOpen(filePath, opts);
 
     const opened = [];
     const missing = [];

@@ -10,16 +10,58 @@
 const path = require('node:path');
 
 // The two workspace roots (CONTEXT §2). All repo paths derive from these.
-const WORKSPACES = {
+const DEFAULT_WORKSPACE_ROOTS = Object.freeze({
   'sp-local-workspace': 'C:\\Users\\TrungPhung\\Downloads\\repositories\\sp-local-workspace',
   'new-frontend': 'C:\\Users\\TrungPhung\\Downloads\\repositories\\new-frontend',
+});
+
+const WORKSPACE_CONFIG_KEYS = {
+  'sp-local-workspace': 'spLocalWorkspace',
+  'new-frontend': 'newFrontend',
 };
 
-const SP = WORKSPACES['sp-local-workspace'];
-const NF = WORKSPACES['new-frontend'];
+// Mutable in-place object kept for API compatibility with existing imports.
+const WORKSPACES = { ...DEFAULT_WORKSPACE_ROOTS };
+
+// Initial constants are used only to build the default array before refreshRepoPaths()
+// applies the current roots. Later root changes mutate the exported repo objects in place.
+const SP = DEFAULT_WORKSPACE_ROOTS['sp-local-workspace'];
+const NF = DEFAULT_WORKSPACE_ROOTS['new-frontend'];
 
 const SP_BRANCH = 'master'; // CONTEXT §4 — every sp-local-workspace repo
 const NF_BRANCH = 'new-frontend-dev-prod'; // CONTEXT §4 — new-frontend
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function workspaceRootFrom(source, workspaceId) {
+  if (!isPlainObject(source)) return null;
+  const configKey = WORKSPACE_CONFIG_KEYS[workspaceId];
+  return nonEmptyString(source[workspaceId]) || nonEmptyString(source[configKey]);
+}
+
+function resolveWorkspaceRoots(source) {
+  const roots = isPlainObject(source) && isPlainObject(source.workspaceRoots)
+    ? source.workspaceRoots
+    : source;
+
+  return {
+    'sp-local-workspace':
+      workspaceRootFrom(roots, 'sp-local-workspace') ||
+      DEFAULT_WORKSPACE_ROOTS['sp-local-workspace'],
+    'new-frontend':
+      workspaceRootFrom(roots, 'new-frontend') || DEFAULT_WORKSPACE_ROOTS['new-frontend'],
+  };
+}
+
+function getWorkspaceRoots() {
+  return { ...WORKSPACES };
+}
 
 // Field contract per repo:
 //   id              : stable identifier used by IPC / config
@@ -268,11 +310,104 @@ const repos = [
   },
 ];
 
+const REPO_PATHS = {
+  selfpointrest: {
+    workspace: 'sp-local-workspace',
+    path: ['servers', 'selfpointrest'],
+    installCwd: ['servers', 'selfpointrest'],
+    runCwd: ['servers', 'selfpointrest'],
+  },
+  loyalty: {
+    workspace: 'sp-local-workspace',
+    path: ['servers', 'loyalty'],
+    installCwd: ['servers', 'loyalty'],
+    runCwd: ['servers', 'loyalty'],
+  },
+  'indexer-queue-subscriber': {
+    workspace: 'sp-local-workspace',
+    path: ['servers', 'indexer-queue-subscriber'],
+    installCwd: ['servers', 'indexer-queue-subscriber'],
+    runCwd: ['servers', 'indexer-queue-subscriber'],
+  },
+  'token-service': {
+    workspace: 'sp-local-workspace',
+    path: ['servers', 'token-service'],
+    installCwd: ['servers', 'token-service'],
+    runCwd: ['servers', 'token-service'],
+  },
+  backend: {
+    workspace: 'sp-local-workspace',
+    path: ['public', 'backend'],
+    installCwd: ['public', 'backend'],
+    runCwd: ['servers', 'selfpointrest'],
+  },
+  frontend: {
+    workspace: 'sp-local-workspace',
+    path: ['public', 'frontend'],
+    installCwd: ['public', 'frontend'],
+    runCwd: ['servers', 'selfpointrest'],
+  },
+  mobile: {
+    workspace: 'sp-local-workspace',
+    path: ['public', 'mobile'],
+    installCwd: ['public', 'mobile'],
+    runCwd: ['public', 'mobile'],
+  },
+  collection: {
+    workspace: 'sp-local-workspace',
+    path: ['public', 'collection'],
+    installCwd: ['public', 'collection'],
+    runCwd: ['public', 'collection'],
+  },
+  'stor-web': {
+    workspace: 'new-frontend',
+    path: ['apps', 'stor-web'],
+    installCwd: [],
+    runCwd: [],
+  },
+};
+
+function workspacePath(workspaceId, parts) {
+  return path.join(WORKSPACES[workspaceId], ...parts);
+}
+
+function refreshRepoPaths() {
+  repos.forEach((repo) => {
+    const spec = REPO_PATHS[repo.id];
+    if (!spec) return;
+    repo.path = workspacePath(spec.workspace, spec.path);
+    repo.installCwd = workspacePath(spec.workspace, spec.installCwd);
+    repo.runCwd = workspacePath(spec.workspace, spec.runCwd);
+  });
+  return repos;
+}
+
+function setWorkspaceRoots(rootsOrConfig) {
+  const nextRoots = resolveWorkspaceRoots(rootsOrConfig);
+  WORKSPACES['sp-local-workspace'] = nextRoots['sp-local-workspace'];
+  WORKSPACES['new-frontend'] = nextRoots['new-frontend'];
+  refreshRepoPaths();
+  return getWorkspaceRoots();
+}
+
+function setWorkspaceRootsForTest(rootsOrConfig) {
+  return setWorkspaceRoots(rootsOrConfig);
+}
+
+function getRepo(id) {
+  return repos.find((r) => r.id === id) || null;
+}
+
+refreshRepoPaths();
+
 module.exports = repos;
 module.exports.repos = repos;
+module.exports.DEFAULT_WORKSPACE_ROOTS = DEFAULT_WORKSPACE_ROOTS;
 module.exports.WORKSPACES = WORKSPACES;
+module.exports.getWorkspaceRoots = getWorkspaceRoots;
+module.exports.resolveWorkspaceRoots = resolveWorkspaceRoots;
+module.exports.setWorkspaceRoots = setWorkspaceRoots;
+module.exports.setWorkspaceRootsForTest = setWorkspaceRootsForTest;
 
 // Lookup helper reused by later tasks (git/deps/runner) — avoids re-scanning the array.
-module.exports.getRepo = function getRepo(id) {
-  return repos.find((r) => r.id === id) || null;
-};
+module.exports.getRepo = getRepo;

@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld('launcher', {
   version: '0.1.0',
   // F1 / TA2 — return the repo registry (metadata only).
   listRepos: () => ipcRenderer.invoke('repos:list'),
+  workspace: {
+    getRoots: () => ipcRenderer.invoke('workspace:getRoots'),
+    setRoots: (roots) => ipcRenderer.invoke('workspace:setRoots', roots),
+    pickFolder: (options) => ipcRenderer.invoke('workspace:pickFolder', options),
+  },
   // F2/F3 — git info + safe mutating ops per repo.
   //   TB1 (read-only): listBranches / currentBranch / isClean.
   //   TB2 (mutating):  fetch / checkout / pull — return { ok, reason?, branch?, message };
@@ -19,6 +24,12 @@ contextBridge.exposeInMainWorld('launcher', {
     fetch: (repoId) => ipcRenderer.invoke('git:fetch', repoId),
     checkout: (repoId, branch) => ipcRenderer.invoke('git:checkout', repoId, branch),
     pull: (repoId) => ipcRenderer.invoke('git:pull', repoId),
+    previewLocalChanges: (repoId, options) =>
+      ipcRenderer.invoke('git:previewLocalChanges', repoId, options),
+    resetTrackedChanges: (repoId, confirmation) =>
+      ipcRenderer.invoke('git:resetTrackedChanges', repoId, confirmation),
+    discardAllLocalChanges: (repoId, confirmation) =>
+      ipcRenderer.invoke('git:discardAllLocalChanges', repoId, confirmation),
   },
   deps: {
     getStatus: (repoId) => ipcRenderer.invoke('deps:getStatus', repoId),

@@ -9,6 +9,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { getRepo } = require('./repos');
+const platform = require('./platform');
 
 const LOCKFILES_BY_PM = {
   npm: ['package-lock.json', 'npm-shrinkwrap.json'],
@@ -18,10 +19,7 @@ const LOCKFILES_BY_PM = {
 const activeInstalls = new Map();
 
 function commandFor(packageManager) {
-  const suffix = process.platform === 'win32' ? '.cmd' : '';
-  if (packageManager === 'npm') return `npm${suffix}`;
-  if (packageManager === 'pnpm') return `pnpm${suffix}`;
-  throw new Error(`Unsupported package manager: ${packageManager || '(missing)'}`);
+  return platform.pmCommand(packageManager);
 }
 
 async function statOrNull(filePath) {
@@ -256,7 +254,7 @@ function spawnInstall(repo, plan, onOutput) {
         windowsHide: true,
         // npm.cmd/pnpm.cmd are shell scripts on Windows; using the platform shell keeps
         // the fixed command compatible while cwd still protects paths with spaces.
-        shell: process.platform === 'win32',
+        shell: platform.isWin,
       });
     } catch (err) {
       const message = (err && err.message) || String(err);
