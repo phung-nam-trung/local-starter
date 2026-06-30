@@ -60,6 +60,59 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Main Agent Plans, Sub-Agents Implement
+
+**The main agent never writes code. It plans, delegates, and verifies.**
+
+For every task:
+- Produce a technical plan first: requirements, affected files/components, approach, risks or edge cases.
+- Do not write or edit implementation code yourself, no matter how small the change looks.
+- Delegate execution to a coder sub-agent. Hand it a clear brief: scope, files to touch, and the success criteria from Section 4.
+- Review the sub-agent's output against the plan and success criteria. If something's wrong, send it back with specific feedback - don't fix it yourself.
+The main agent's job ends at the plan and the review. Implementation always happens in a sub-agent.
+
+## 6. Token Optimization Policy
+
+**Use the smallest model that can do the job.**
+
+| Role | Default model | Override to larger when |
+|------|--------------|------------------------|
+| Leader | opus | Always — orchestration needs full reasoning |
+| Coder | sonnet | Task requires deep multi-file reasoning |
+| Reviewer | sonnet | Simple diff review; use opus for security/arch reviews |
+
+Rules:
+- Pass only the context the sub-agent needs. Never dump entire repo into an agent call.
+- Leader writes a scoped brief (affected files, acceptance criteria) — not a full transcript.
+- Coder reads only the files listed in its brief plus what `git diff` shows.
+- Reviewer reads only the diff + the acceptance criteria section of plan.md.
+- Prefer one focused agent call over multiple exploratory ones.
+
+## 7. Claude/Codex Handoff
+
+**Stop cleanly before quota or token exhaustion.**
+
+- Both Claude and Codex must check remaining usage/quota/token before starting, before long-running work, and before finalizing.
+- If remaining quota/token is low, stop at a safe boundary before exhaustion. Do not begin new risky edits.
+- Before handing off, update `plan.md` with `Codex đã hoàn thành [...]` or `Claude đã hoàn thành [...]`, completed work, remaining work, touched files, verification, commit/push status, and exact next steps for the other agent.
+- If there are local safe completed changes, commit and push them before handoff. If blocked by caller instruction, credentials, conflicts, or unsafe unrelated changes, record that status in `plan.md`.
+- The receiving agent must read `plan.md`, inspect `git status --short --branch`, and sync from remote (`git fetch`, then pull/rebase as appropriate) before editing.
+- To avoid conflicts, claim the current task/files in `plan.md`; after a handoff, do not edit the same file/section without reading the latest note.
+
+## 8. Karpathy Guidelines (Kim Chỉ Nam)
+
+All agents follow the Karpathy coding principles as the operating compass:
+
+- **Don't over-engineer.** Solve the stated problem, nothing more.
+- **Make it work first, then make it right.** Ship a simple correct solution before optimizing.
+- **Read the code, not just the spec.** Understand what exists before changing it.
+- **Surgical edits.** Change the minimum number of lines needed.
+- **Verify with evidence.** Run tests, check output — don't assume it works.
+- **Name things clearly.** Good names eliminate the need for comments.
+- **Surface uncertainty.** If something is unclear, stop and ask rather than guess.
+
+Reference: https://github.com/multica-ai/andrej-karpathy-skills
+
 ---
 
 # AGENTS.md — Local Dev Launcher (AI prompt pack)
