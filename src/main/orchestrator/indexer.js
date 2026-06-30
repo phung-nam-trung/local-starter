@@ -415,6 +415,167 @@ async function openTestFiles(opts = {}) {
   }
 }
 
+// --- REST-only toggle (server.js queue.subscribe) --------------------------
+
+// CONTEXT §7: a dev can comment `queue.subscribe()` in server.js to test REST only, without
+// consuming the queue. OBSERVED REAL FORMAT (read-only, 2026-06-30): server.js has exactly ONE
+// active call line at top level (no indentation):
+//       queue.subscribe();
+// The `queue` symbol is also `require`d on another line (`queue = require('./lib/queue')`), but
+// that line has NO `.subscribe(` so it never matches. We toggle the WHOLE call line by adding /
+// removing a `// ` prefix (indent preserved). REST-only = the call is commented.
+
+const SERVER_REL = 'server.js';
+// Matches a line whose code part is a `<...>queue.subscribe(...)` CALL — `.subscribe(` (dot +
+// paren) excludes the bare `require('./lib/queue')`. The leading group captures indentation and,
+// when present, the `// ` we added (we only ever uncomment a line WE commented: a `// ` directly
+// in front of the call, optionally after indentation — see SUBSCRIBE_COMMENTED_RE).
+const SUBSCRIBE_LINE_RE = /queue\s*\.\s*subscribe\s*\(/;
+// A line that is the COMMENTED call: optional indent, then `// ` (our prefix), then the call.
+// We only uncomment lines matching this exact shape, so we never disturb prose comments.
+const SUBSCRIBE_COMMENTED_RE = /^(\s*)\/\/\s?(.*queue\s*\.\s*subscribe\s*\(.*)$/;
+
+// Split into lines while remembering the EOL flavour + trailing-newline so re-join is
+// byte-identical apart from the one line we touch. (Mirrors patchProductsContent.)
+function splitLines(input) {
+  const eol = input.includes('\r\n') ? '\r\n' : '\n';
+  const normalized = input.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const hadTrailingNewline = normalized.endsWith('\n');
+  const lines = normalized.length === 0 ? [] : normalized.split('\n');
+  if (hadTrailingNewline) lines.pop();
+  return { eol, lines, hadTrailingNewline };
+}
+
+function joinLines(lines, eol, hadTrailingNewline) {
+  return hadTrailingNewline ? `${lines.join(eol)}${eol}` : lines.join(eol);
+}
+
+// Inspect server.js text → { found, restOnly }. `found` = a queue.subscribe() call line exists
+// (active or commented). `restOnly` = that line is currently commented out.
+function inspectRestOnly(input) {
+  const { lines } = splitLines(input);
+  let found = false;
+  let restOnly = false;
+  for (const line of lines) {
+    if (!SUBSCRIBE_LINE_RE.test(line)) continue;
+    found = true;
+    // If THIS subscribe line is the commented shape, it's REST-only.
+    if (SUBSCRIBE_COMMENTED_RE.test(line)) restOnly = true;
+    else restOnly = restOnly || false;
+  }
+  return { found, restOnly: found ? restOnly : false };
+}
+
+// Produce new content for the requested REST-only state. enabled=true → comment the active call
+// line; enabled=false → uncomment the commented call line. Idempotent (no-op when already in the
+// target state). Returns { content, changed, found }.
+function setRestOnlyContent(input, enabled) {
+  const { eol, lines, hadTrailingNewline } = splitLines(input);
+  let found = false;
+  let changed = false;
+
+  const next = lines.map((line) => {
+    if (!SUBSCRIBE_LINE_RE.test(line)) return line;
+    found = true;
+    const commented = SUBSCRIBE_COMMENTED_RE.exec(line);
+    if (enabled) {
+      // Want it commented. Already commented → leave as-is (idempotent).
+      if (commented) return line;
+      const indentMatch = /^(\s*)/.exec(line);
+      const indent = indentMatch ? indentMatch[1] : '';
+      const rest = line.slice(indent.length);
+      changed = true;
+      return `${indent}// ${rest}`;
+    }
+    // Want it active. Only uncomment a line WE commented (matches SUBSCRIBE_COMMENTED_RE).
+    if (!commented) return line; // already active → idempotent
+    changed = true;
+    return `${commented[1]}${commented[2]}`; // drop indent's `// ` prefix, keep indent + code
+  });
+
+  return { content: joinLines(next, eol, hadTrailingNewline), changed, found };
+}
+
+// Read-only state probe. opts.filePath targets a COPY for tests; otherwise the real registry
+// path. Returns { ok, found, restOnly } and never throws across IPC.
+async function getRestOnlyState(opts = {}) {
+  try {
+    const filePath = opts.filePath || path.join(resolveIndexerDir(opts), SERVER_REL);
+    const stat = await statOrNull(filePath);
+    if (!stat || !stat.isFile()) {
+      return { ok: false, reason: 'not-found', found: false, restOnly: false, message: `server.js not found: ${filePath}` };
+    }
+    const content = await fs.readFile(filePath, 'utf8');
+    const { found, restOnly } = inspectRestOnly(content);
+    return {
+      ok: true,
+      found,
+      restOnly,
+      target: SERVER_REL,
+      message: found
+        ? `queue.subscribe() is currently ${restOnly ? 'COMMENTED (REST-only)' : 'active'}.`
+        : 'No queue.subscribe() call line found in server.js.',
+    };
+  } catch (err) {
+    return { ok: false, reason: 'error', found: false, restOnly: false, message: (err && err.message) || String(err) };
+  }
+}
+
+// Toggle REST-only. enabled=true → comment queue.subscribe(); enabled=false → uncomment it.
+// Idempotent (already in target state → changed:false, NO new backup). Backs up `*.bak-<ts>`
+// before any write. `pattern-not-found` if no call line exists (never guesses). opts.filePath
+// targets a COPY for tests. Returns a serializable result; never throws across IPC.
+async function setRestOnly(enabled, opts = {}) {
+  try {
+    const want = Boolean(enabled);
+    const filePath = opts.filePath || path.join(resolveIndexerDir(opts), SERVER_REL);
+    const stat = await statOrNull(filePath);
+    if (!stat || !stat.isFile()) {
+      return { ok: false, reason: 'not-found', changed: false, restOnly: false, message: `server.js not found: ${filePath}` };
+    }
+
+    const original = await fs.readFile(filePath, 'utf8');
+    const next = setRestOnlyContent(original, want);
+
+    if (!next.found) {
+      return {
+        ok: false,
+        reason: 'pattern-not-found',
+        changed: false,
+        restOnly: false,
+        message: 'Could not find a queue.subscribe() call line in server.js.',
+      };
+    }
+
+    if (!next.changed) {
+      return {
+        ok: true,
+        changed: false,
+        restOnly: want,
+        backupName: null,
+        target: SERVER_REL,
+        message: `queue.subscribe() already ${want ? 'commented (REST-only)' : 'active'} — no change.`,
+      };
+    }
+
+    const backupName = await backupFile(filePath);
+    await fs.writeFile(filePath, next.content, 'utf8');
+
+    return {
+      ok: true,
+      changed: true,
+      restOnly: want,
+      backupName,
+      target: SERVER_REL,
+      message: want
+        ? 'queue.subscribe() commented out (REST-only). Restart the indexer to apply.'
+        : 'queue.subscribe() restored (active). Restart the indexer to apply.',
+    };
+  } catch (err) {
+    return { ok: false, reason: 'error', changed: false, restOnly: false, message: (err && err.message) || String(err) };
+  }
+}
+
 // --- restart ---------------------------------------------------------------
 
 // Thin wrapper over runner.restart for the indexer. runner.restart = stop (tree-kill) -> start,
@@ -430,12 +591,17 @@ module.exports = {
   PRODUCTS_REL,
   SPECIALS_REL,
   SPECIALS_CONFIG_REL,
+  SERVER_REL,
   applyProductsPreset,
   applySpecialsConfig,
   openTestFiles,
   restartIndexer,
+  getRestOnlyState,
+  setRestOnly,
   // Exported for unit verification against COPIES (no fs / no spawn).
   patchProductsContent,
   patchSpecialsContent,
   normalizeProductIds,
+  inspectRestOnly,
+  setRestOnlyContent,
 };

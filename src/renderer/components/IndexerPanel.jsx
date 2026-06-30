@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 // F8 / TG1 — indexer-only panel. Renders ONLY when the active repo is
 // indexer-queue-subscriber (CONTEXT §7). Lets the dev:
@@ -14,15 +14,41 @@ export default function IndexerPanel({ repo }) {
   const [special, setSpecial] = useState('');
   const [specialRetailer, setSpecialRetailer] = useState('');
 
-  const [busy, setBusy] = useState(null); // 'open' | 'products' | 'specials' | 'restart' | null
+  const [busy, setBusy] = useState(null); // 'open' | 'products' | 'specials' | 'restart' | 'restonly' | null
   const [openResult, setOpenResult] = useState(null);
   const [productsResult, setProductsResult] = useState(null);
   const [specialsResult, setSpecialsResult] = useState(null);
   const [restartResult, setRestartResult] = useState(null);
   const [error, setError] = useState(null);
 
+  // TG2 — REST-only toggle (comment/uncomment queue.subscribe() in server.js). restOnly mirrors
+  // the on-disk state; loaded on mount and after each set. restOnlyResult shows changed/backup.
+  const [restOnly, setRestOnly] = useState(false);
+  const [restOnlyResult, setRestOnlyResult] = useState(null);
+
+  const isIndexer = repo && repo.id === 'indexer-queue-subscriber';
+
+  // Load the current REST-only state when the panel mounts for the indexer.
+  useEffect(() => {
+    if (!isIndexer) return undefined;
+    let cancelled = false;
+    window.launcher.indexer
+      .getRestOnly()
+      .then((res) => {
+        if (cancelled || !res) return;
+        setRestOnlyResult(res);
+        if (res.ok) setRestOnly(Boolean(res.restOnly));
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isIndexer]);
+
   // Render nothing for non-indexer repos; RepoList always mounts this, so guard here.
-  if (!repo || repo.id !== 'indexer-queue-subscriber') return null;
+  if (!isIndexer) return null;
 
   const anyBusy = busy !== null;
 
@@ -64,6 +90,18 @@ export default function IndexerPanel({ repo }) {
   // Restart reuses the generic runner.restart (no buildUIs for the indexer).
   const onRestart = () =>
     run('restart', () => window.launcher.runner.restart(repo.id, {}), setRestartResult);
+
+  // TG2 — flip REST-only. Optimistically set the desired state, call setRestOnly, then sync the
+  // checkbox to the authoritative on-disk state the handler reports back (revert on failure).
+  const onToggleRestOnly = (e) => {
+    const next = e.target.checked;
+    setRestOnly(next);
+    run('restonly', () => window.launcher.indexer.setRestOnly(next), (res) => {
+      setRestOnlyResult(res);
+      if (res && res.ok) setRestOnly(Boolean(res.restOnly));
+      else setRestOnly(!next); // revert the checkbox if the patch failed
+    });
+  };
 
   return (
     <section style={styles.panel}>
@@ -151,6 +189,24 @@ export default function IndexerPanel({ repo }) {
         {specialsResult && <ResultLine result={specialsResult} />}
       </fieldset>
 
+      <fieldset style={styles.fieldset}>
+        <legend style={styles.legend}>queue (server.js)</legend>
+        <label style={styles.checkboxField}>
+          <input
+            type="checkbox"
+            checked={restOnly}
+            onChange={onToggleRestOnly}
+            disabled={anyBusy}
+          />
+          REST-only (comment <code>queue.subscribe()</code>)
+        </label>
+        <p style={styles.meta}>
+          Bat = comment <code>queue.subscribe()</code> de chi test REST, khong tieu thu queue.
+          Doi xong phai <strong>Restart indexer</strong> ben duoi de ap dung.
+        </p>
+        {restOnlyResult && <ResultLine result={restOnlyResult} />}
+      </fieldset>
+
       <div style={styles.row}>
         <button type="button" onClick={onRestart} disabled={anyBusy}>
           {busy === 'restart' ? 'Restarting...' : 'Restart indexer'}
@@ -227,6 +283,13 @@ const styles = {
     gap: '0.2rem',
     fontSize: '0.85rem',
     marginBottom: '0.5rem',
+  },
+  checkboxField: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.4rem',
+    fontSize: '0.85rem',
+    marginBottom: '0.4rem',
   },
   input: {
     padding: '0.35rem 0.5rem',

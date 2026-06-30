@@ -62,6 +62,10 @@ contextBridge.exposeInMainWorld('launcher', {
     openFiles: () => ipcRenderer.invoke('indexer:openFiles'),
     applyProducts: (preset) => ipcRenderer.invoke('indexer:applyProducts', preset),
     applySpecials: (values) => ipcRenderer.invoke('indexer:applySpecials', values),
+    // TG2 — REST-only: read/flip the commented state of queue.subscribe() in server.js.
+    // Returns { ok, found, restOnly, ... } / { ok, changed, restOnly, backupName, message }.
+    getRestOnly: () => ipcRenderer.invoke('indexer:getRestOnly'),
+    setRestOnly: (enabled) => ipcRenderer.invoke('indexer:setRestOnly', enabled),
   },
   // F5 / TD1 — VPN detect + connect + poll. check returns { connected, method, detail? };
   // connect launches OpenVPN GUI (if needed) + fires the native notification + starts a

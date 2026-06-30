@@ -107,6 +107,11 @@ function setupIpc() {
   ipcMain.handle('indexer:applySpecials', (_event, values = {}) =>
     indexer.applySpecialsConfig({ retailer: values.retailer, special: values.special })
   );
+  // TG2 — REST-only toggle: comment/uncomment queue.subscribe() in server.js (idempotent +
+  // backup). getRestOnly reports the current state; setRestOnly(enabled) flips it. No filePath
+  // is accepted from the renderer — always targets the real registry path.
+  ipcMain.handle('indexer:getRestOnly', () => indexer.getRestOnlyState());
+  ipcMain.handle('indexer:setRestOnly', (_event, enabled) => indexer.setRestOnly(Boolean(enabled)));
 
   // VPN handlers (F5 / TD1). All config (probeHost/probePort/exePath) comes from the
   // renderer — nothing is hardcoded. The native "Hãy đăng nhập VPN" Notification is fired
