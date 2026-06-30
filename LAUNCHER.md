@@ -56,6 +56,64 @@ npm start
 
 ---
 
+## Quy trình sử dụng nhanh
+
+### Lần đầu trước khi bấm Start
+
+1. Mở app bằng `npm start`.
+2. Kiểm tra danh sách repo ở cột trái. Nếu không thấy đủ 9 repo, kiểm tra lại 2 workspace:
+   - `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace`
+   - `C:\Users\TrungPhung\Downloads\repositories\new-frontend`
+3. Chọn repo muốn chạy. Click vào từng repo để mở panel chi tiết ở cột phải.
+4. Ở **Branch**, bấm **Fetch**, chọn branch cần dùng, rồi **Checkout/Pull**. Nếu app báo repo đang dirty, hãy commit/stash thủ công trong repo đó trước.
+5. Ở **Deps**, bấm **Check deps**. Nếu thiếu hoặc stale, bấm **Install if needed**. Dùng **Force reinstall** khi muốn ép cài lại.
+6. Nếu chạy backend, vào **VPN**, nhập probe host/port nội bộ nếu có, bấm **Check** hoặc **Connect**, đăng nhập OpenVPN khi GUI mở lên. Nếu chỉ chạy UI thuần, có thể bấm **Skip**.
+7. Nếu chạy `selfpointrest`, vào **Env - selfpointrest**, chọn `prod` hoặc `test`, rồi bấm **Apply env**.
+8. Vào **Run**, chọn tùy chọn build cần thiết rồi bấm **Build & Start**. Theo dõi log ngay trong app.
+9. Khi xong việc, dùng **Stop** cho từng repo hoặc **Stop all** để dừng toàn bộ process con.
+
+### Luồng thường dùng
+
+**Chạy selfpointrest + Back Office/Kikar/Prutah**
+
+1. Chọn `selfpointrest`.
+2. Kết nối VPN.
+3. Chọn env `prod` hoặc `test`.
+4. Check/install deps nếu cần.
+5. Trong RunControls, chọn UI muốn build: Back Office, Kikar, Prutah.
+6. Bấm **Build & Start**.
+7. Mở:
+   - `http://localhost:3000/backend`
+   - `http://localhost:3000/kikar`
+   - `http://localhost:3000/prutah`
+
+**Chạy stor-web**
+
+1. Chọn `stor-web`.
+2. Fetch/checkout branch trong BranchPicker.
+3. Check/install deps. Lưu ý `pnpm install` chạy ở root `new-frontend`.
+4. Bấm **Build & Start**.
+5. Mở `http://localhost:3002`.
+
+**Chạy mobile hoặc collection**
+
+1. Chọn `mobile` hoặc `collection`.
+2. Không chọn cả hai cùng lúc nếu đều dùng port mặc định `9000`.
+3. Check/install deps nếu cần.
+4. Bấm **Build & Start**.
+5. Mở `http://localhost:9000`.
+
+**Chạy indexer**
+
+1. Chọn `indexer-queue-subscriber`.
+2. Kết nối VPN.
+3. Mở **Indexer** panel.
+4. Bấm mở file test để sửa tay, hoặc nhập preset `retailerId`, `productIds`, `special`.
+5. Bấm apply preset. App sẽ backup file trước khi patch.
+6. Bấm **Restart indexer** sau mỗi lần sửa vì repo này không có nodemon.
+
+---
+
 ## 3. Tính năng (F1–F12)
 
 Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằm trên cùng (StatusTable), từng repo có card riêng (RepoList) với các panel con.
@@ -113,6 +171,24 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 - Launcher **không bao giờ in nội dung `.env*`** ra log (chứa secret).
 - Mọi thao tác sửa file trong `repositories/*` (đổi `.env`, patch indexer) đều **idempotent + có backup**, không phá git working tree.
 - Stop = kill **cả cây process** (`taskkill /T /F`) → không để node/gulp/next mồ côi giữ port.
+
+---
+
+## Xử lý lỗi thường gặp
+
+| Hiện tượng | Cách xử lý |
+|---|---|
+| PowerShell báo `npm.ps1 cannot be loaded because running scripts is disabled` | Chạy bằng `npm.cmd ...` thay vì `npm ...`, hoặc chỉnh Execution Policy theo policy của máy. |
+| App báo repo dirty khi Checkout/Pull | Vào repo tương ứng, tự `git status`, rồi commit/stash/discard thủ công. Launcher không tự overwrite thay đổi local. |
+| Fetch/Pull lỗi network hoặc auth | Kiểm tra VPN, quyền Git remote, token/SSH key, rồi chạy lại Fetch/Pull. |
+| Backend start lỗi DB/ES | Kiểm tra VPN đã connected thật chưa; nhập probe host/port nội bộ rồi bấm Check/Connect lại. |
+| OpenVPN GUI không mở | Kiểm tra đường dẫn `C:\Program Files\OpenVPN\bin\openvpn-gui.exe`; nếu cài chỗ khác, nhập path đúng trong VPN panel. |
+| `pnpm` không tìm thấy khi chạy stor-web | Chạy `corepack enable`, mở lại terminal/app, rồi thử lại. |
+| Cài deps fail ở bower/gulp/Husky | Xem log trong DepsPanel, sửa nguyên nhân trong repo con, rồi bấm Retry hoặc Force reinstall. |
+| Port bận (`EADDRINUSE`) | Dùng StatusTable/RunControls để Stop repo đang giữ port, hoặc tự kiểm bằng `netstat`. Với `mobile`/`collection`, chỉ chạy một repo trên port 9000. |
+| Stop xong vẫn còn process node/gulp/next | Dùng **Stop all**. Nếu vẫn còn, kiểm tra Task Manager và kill tay process mồ côi, rồi báo lại để kiểm tra runner. |
+| selfpointrest không thấy `/backend`, `/kikar`, `/prutah` | Đảm bảo đã chọn build UI tương ứng trước khi start selfpointrest; kiểm tra `.env` có `clients_dir="../../public"`. |
+| Không muốn đụng env thật khi test | Không bấm Apply env trong selfpointrest. EnvSelector chỉ đổi `.env` khi bấm Apply và luôn backup trước. |
 
 ---
 
