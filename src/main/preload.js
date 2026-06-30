@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('launcher', {
     start: (repoId, options) => ipcRenderer.invoke('runner:start', repoId, options),
     restart: (repoId, options) => ipcRenderer.invoke('runner:restart', repoId, options),
     stop: (repoId) => ipcRenderer.invoke('runner:stop', repoId),
+    // TH2 / F9 — Stop all active repos at once. Returns { ok, stopped:[repoId...], results }.
+    stopAll: () => ipcRenderer.invoke('runner:stopAll'),
     status: (repoId) => ipcRenderer.invoke('runner:status', repoId),
     // TH1 — one snapshot for every repo (status table dashboard). In-memory, cheap to poll.
     statusAll: () => ipcRenderer.invoke('runner:statusAll'),

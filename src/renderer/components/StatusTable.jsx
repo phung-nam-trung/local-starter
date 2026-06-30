@@ -27,6 +27,8 @@ export default function StatusTable() {
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [error, setError] = useState(null);
   const [stopping, setStopping] = useState(null); // repoId currently being stopped
+  const [stoppingAll, setStoppingAll] = useState(false); // Stop all in flight
+  const [stopAllMsg, setStopAllMsg] = useState(null); // short result of the last Stop all
   // Latest repo list for callbacks (avoids re-creating refreshBranches on every repos change).
   const reposRef = useRef([]);
 
@@ -108,6 +110,35 @@ export default function StatusTable() {
     }
   }
 
+  // F9 / TH2 — Stop all active repos (tree-kill, frees ports). After it returns, refresh the
+  // status snapshot immediately so the table reflects the stopped state without waiting for
+  // the next poll, and show a short summary.
+  async function onStopAll() {
+    setStoppingAll(true);
+    setStopAllMsg(null);
+    try {
+      const res = await window.launcher.runner.stopAll();
+      const stopped = (res && res.stopped) || [];
+      setStopAllMsg(
+        stopped.length === 0
+          ? 'Khong co repo nao dang chay.'
+          : `Da stop ${stopped.length} repo.`
+      );
+      try {
+        const all = await window.launcher.runner.statusAll();
+        const byId = {};
+        for (const s of all) byId[s.repoId] = s;
+        setStatusById(byId);
+      } catch (_err) {
+        // The 1.5s poll will catch up if this one-off refresh fails.
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setStoppingAll(false);
+    }
+  }
+
   if (error) {
     return (
       <section style={styles.panel}>
@@ -128,11 +159,19 @@ export default function StatusTable() {
         <span style={styles.summary}>
           {runningCount} running / {repos.length} repos
         </span>
+        {stopAllMsg ? <span style={styles.summary}>{stopAllMsg}</span> : null}
+        <button
+          type="button"
+          onClick={onStopAll}
+          disabled={stoppingAll || runningCount === 0}
+          style={styles.stopAllBtn}
+        >
+          {stoppingAll ? 'Stopping all...' : 'Stop all'}
+        </button>
         <button
           type="button"
           onClick={() => refreshBranches()}
           disabled={branchesLoading}
-          style={styles.refreshBtn}
         >
           {branchesLoading ? 'Refreshing...' : 'Refresh branches'}
         </button>
@@ -210,7 +249,7 @@ const styles = {
     color: '#555',
     fontSize: '0.9rem',
   },
-  refreshBtn: {
+  stopAllBtn: {
     marginLeft: 'auto',
   },
   table: {

@@ -549,6 +549,40 @@ async function stop(repoId) {
   };
 }
 
+// stopAll() — stop EVERY active repo (TH2 / F9). "Active" = the runners map holds an entry
+// that is running/building/starting OR still has a live long-running/build child. We reuse
+// stop(repoId) for each one, so each gets the same tree-kill (`taskkill /T /F`) that frees
+// its port and leaves no orphan node/gulp/next children. Stops run sequentially (each stop
+// is independent; sequential keeps taskkill output un-interleaved and is plenty fast for ~9
+// repos). A repo that was never started has no entry, so it is skipped. Returns a
+// serializable { ok, stopped:[repoId...], results:[...] }; nothing running => { ok:true,
+// stopped:[] }. Never throws across IPC (stop() itself never throws).
+async function stopAll() {
+  const active = [];
+  for (const entry of runners.values()) {
+    if (
+      entry.state === STATES.RUNNING ||
+      entry.state === STATES.BUILDING ||
+      entry.state === STATES.STARTING ||
+      entry.child ||
+      entry.buildChild
+    ) {
+      active.push(entry.repoId);
+    }
+  }
+
+  const results = [];
+  for (const repoId of active) {
+    results.push(await stop(repoId));
+  }
+
+  return {
+    ok: results.every((r) => r.ok),
+    stopped: active,
+    results,
+  };
+}
+
 // restart(repoId, opts) — stop then start with the same options.
 async function restart(repoId, opts = {}) {
   const stopResult = await stop(repoId);
@@ -617,6 +651,7 @@ module.exports = {
   STATES,
   start,
   stop,
+  stopAll,
   restart,
   getStatus,
   getAllStatuses,

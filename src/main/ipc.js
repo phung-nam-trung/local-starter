@@ -197,6 +197,9 @@ function setupIpc() {
   });
 
   ipcMain.handle('runner:stop', (_event, repoId) => runner.stop(repoId));
+  // F9 / TH2 — Stop all: tree-kill every active repo at once (frees their ports, no
+  // orphans). Returns { ok, stopped:[repoId...], results:[...] } — plain serializable data.
+  ipcMain.handle('runner:stopAll', () => runner.stopAll());
   ipcMain.handle('runner:status', (_event, repoId) => runner.getStatus(repoId));
   // TH1 — status table polls this for an in-memory snapshot of EVERY repo at once
   // (one IPC call instead of nine). Returns a serializable array; never spawns anything.
