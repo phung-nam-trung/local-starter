@@ -1,6 +1,6 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
 
 const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
@@ -63,10 +63,88 @@ function openPath(targetPath, options = {}) {
   };
 }
 
+// killTree(pid, options) — kill an ENTIRE process tree cross-platform. Resolves a
+// serializable { ok, message }; never throws (callers go through IPC).
+//
+//   win32  : `taskkill /PID <pid> /T /F` — /T kills children, /F forces. taskkill exits
+//            128 if the process is already gone; we treat that as success (goal met).
+//   posix  : negative-PID signals the whole PROCESS GROUP — but only when the leader was
+//            spawned `detached:true` (so its pid == pgid). We send SIGTERM to -pid, wait
+//            briefly, then SIGKILL -pid if anything is still alive. ESRCH = already dead =
+//            success.
+//
+// Test hooks (mirror openPath): options.platform forces the OS branch; options.execFileImpl
+// stubs taskkill (win); options.killImpl stubs process.kill (posix). options.posixTermWaitMs
+// shortens the SIGTERM→SIGKILL grace in tests.
+function killTree(pid, options = {}) {
+  const platformName = optionPlatform(options);
+
+  return new Promise((resolve) => {
+    if (pid == null) {
+      resolve({ ok: true, message: 'No PID to kill.' });
+      return;
+    }
+
+    if (platformName === 'win32') {
+      const execFileImpl = options.execFileImpl || execFile;
+      // PID is a number → no quoting needed. windowsHide avoids a console flash.
+      execFileImpl('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (err, _out, stderr) => {
+        if (err) {
+          const detail = (stderr || err.message || '').toString().trim();
+          // 128 = process not found (already exited) — not an error for our purposes.
+          if (err.code === 128 || /not found|không tìm thấy/i.test(detail)) {
+            resolve({ ok: true, message: 'Process already exited.' });
+            return;
+          }
+          resolve({ ok: false, message: `taskkill failed: ${detail}` });
+          return;
+        }
+        resolve({ ok: true, message: `taskkill /T /F /PID ${pid} done.` });
+      });
+      return;
+    }
+
+    // POSIX (darwin/linux): group-kill via negative pid (requires detached spawn).
+    const killImpl = options.killImpl || process.kill.bind(process);
+    const graceMs = Number.isFinite(options.posixTermWaitMs) ? options.posixTermWaitMs : 3000;
+
+    const tryKill = (signal) => {
+      try {
+        killImpl(-pid, signal);
+        return { delivered: true };
+      } catch (err) {
+        if (err && err.code === 'ESRCH') return { delivered: false, gone: true };
+        return { delivered: false, error: (err && err.message) || String(err) };
+      }
+    };
+
+    const term = tryKill('SIGTERM');
+    if (term.gone) {
+      resolve({ ok: true, message: 'Process already exited.' });
+      return;
+    }
+    if (term.error) {
+      resolve({ ok: false, message: term.error });
+      return;
+    }
+
+    // Give the group a moment to exit on SIGTERM, then force-kill any survivors.
+    setTimeout(() => {
+      const probe = tryKill('SIGKILL');
+      if (probe.gone || probe.delivered) {
+        resolve({ ok: true, message: `Killed process group ${pid} (SIGTERM→SIGKILL).` });
+        return;
+      }
+      resolve({ ok: false, message: probe.error || `Failed to kill process group ${pid}.` });
+    }, graceMs);
+  });
+}
+
 module.exports = {
   isWin,
   isMac,
   isLinux,
   pmCommand,
   openPath,
+  killTree,
 };

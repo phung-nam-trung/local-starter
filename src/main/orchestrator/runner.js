@@ -14,18 +14,24 @@
 // loyalty/token-service/stor-web/etc. drive through the SAME engine (their build step is
 // just skipped when null).
 //
-// Windows specifics (CONTEXT §10.2/§10.3):
-//   - spawn with shell:true so npm.cmd / pnpm.cmd resolve; windowsHide:true.
-//   - stop() kills the WHOLE process tree via `taskkill /T /F /PID <pid>` — npm/gulp/next
+// Process-tree handling (CONTEXT §10.2/§10.3) — cross-platform via platform.killTree:
+//   - We always spawn with shell:true so npm.cmd / pnpm.cmd (win) and npm/pnpm (posix)
+//     resolve; windowsHide:true.
+//   - Windows: stop() kills the WHOLE tree via `taskkill /T /F /PID <pid>` — npm/gulp/next
 //     spawn many children, so killing only the shell PID would orphan them.
+//   - POSIX: the long-running step is spawned `detached:true` so the shell becomes a
+//     process-group LEADER; stop() then group-kills via `process.kill(-pid, …)` (SIGTERM
+//     then SIGKILL). Without detached, a plain process.kill(pid) would orphan the children.
+//     We do NOT detach on Windows — that would pop a new console window.
 //
 // Every exported function returns a SERIALIZABLE plain object and never throws across IPC.
 
-const { spawn, execFile } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { getRepo, repos } = require('./repos');
 const { isPortBusy, repoForPort } = require('./ports');
+const platform = require('./platform');
 
-const isWin = process.platform === 'win32';
+const isWin = platform.isWin;
 
 // State model (plan §2 / CONTEXT §11): stopped | building | running | crashed.
 // We also surface 'starting' transiently while a run is being set up.
@@ -172,12 +178,20 @@ function spawnStep(entry, repo, step, cwd, env, onOutput) {
   // shell:true => pass the full command string as a single argument. This keeps npm.cmd /
   // pnpm.cmd and chained args working on Windows; cwd (set separately) handles spaces in
   // the path so we never have to quote it inside the command string.
-  const child = spawn(step.command, {
+  //
+  // detached only on POSIX: it makes the shell a process-group leader (pid == pgid) so
+  // stop() can group-kill the whole tree via platform.killTree(-pid). On Windows we must
+  // NOT detach (it would open a new console window) — taskkill /T already walks the tree.
+  const spawnOptions = {
     cwd,
     env,
     shell: true,
     windowsHide: true,
-  });
+  };
+  if (!isWin) {
+    spawnOptions.detached = true;
+  }
+  const child = spawn(step.command, spawnOptions);
 
   const tag = (stream) => (chunk) => {
     const text = chunk.toString();
@@ -442,47 +456,12 @@ async function start(repoId, opts = {}) {
   };
 }
 
-// Kill an entire process tree on Windows via taskkill /T /F. On non-Windows fall back to
-// process.kill (POSIX) — the project targets Windows, but keeping the engine runnable on
-// CI/dev shells avoids surprises. Resolves { ok, message }.
+// Kill an entire process tree. Delegates to platform.killTree, which uses taskkill /T /F on
+// Windows and a detached process-group kill (SIGTERM→SIGKILL) on POSIX. Resolves { ok,
+// message }. The POSIX group-kill only reaches children because the long-running step is
+// spawned detached (see spawnStep).
 function killTree(pid) {
-  return new Promise((resolve) => {
-    if (pid == null) {
-      resolve({ ok: true, message: 'No PID to kill.' });
-      return;
-    }
-    if (isWin) {
-      // /T = kill the whole tree (children), /F = force. PID passed as an arg (no quoting
-      // needed for a number). taskkill exits non-zero (128) if the process is already gone
-      // — treat that as success since the goal (process not running) is met.
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (err, _out, stderr) => {
-        if (err) {
-          const detail = (stderr || err.message || '').toString().trim();
-          // 128 = process not found (already exited). Not an error for our purposes.
-          if (err.code === 128 || /not found|không tìm thấy/i.test(detail)) {
-            resolve({ ok: true, message: 'Process already exited.' });
-            return;
-          }
-          resolve({ ok: false, message: `taskkill failed: ${detail}` });
-          return;
-        }
-        resolve({ ok: true, message: `taskkill /T /F /PID ${pid} done.` });
-      });
-      return;
-    }
-    // POSIX fallback: negative PID kills the process group when spawned detached; here we
-    // simply send SIGKILL to the PID (best effort outside Windows).
-    try {
-      process.kill(pid, 'SIGKILL');
-      resolve({ ok: true, message: `Killed pid ${pid}.` });
-    } catch (err) {
-      if (err && err.code === 'ESRCH') {
-        resolve({ ok: true, message: 'Process already exited.' });
-        return;
-      }
-      resolve({ ok: false, message: (err && err.message) || String(err) });
-    }
-  });
+  return platform.killTree(pid);
 }
 
 // Wait until the long-running child's 'close' has fired (state left RUNNING/BUILDING),
