@@ -1,6 +1,7 @@
 'use strict';
 
-const { ipcMain, Notification } = require('electron');
+const path = require('node:path');
+const { app, ipcMain, Notification } = require('electron');
 const repos = require('./orchestrator/repos');
 const git = require('./orchestrator/git');
 const deps = require('./orchestrator/deps');
@@ -9,6 +10,15 @@ const runner = require('./orchestrator/runner');
 const ports = require('./orchestrator/ports');
 const vpn = require('./orchestrator/vpn');
 const indexer = require('./orchestrator/indexer');
+const store = require('./orchestrator/store');
+
+// F12 / TI1 — persisted config lives in the app's userData dir under a fixed filename. The
+// path is resolved HERE (main), never accepted from the renderer, so a compromised renderer
+// can't read/write arbitrary files.
+const CONFIG_FILENAME = 'launcher-config.json';
+function configPath() {
+  return path.join(app.getPath('userData'), CONFIG_FILENAME);
+}
 
 // VPN (TD1) — at most ONE poll runs at a time. We keep its cancel() handle so vpn:cancel
 // (and a fresh vpn:connect) can stop the previous poll. The poll handle lives in main (not
@@ -213,6 +223,17 @@ function setupIpc() {
       skipBuild: Boolean(options.skipBuild),
     })
   );
+
+  // Config persistence (F12 / TI1). The renderer NEVER supplies the file path — it is always
+  // resolved from userData here. load returns the merged config (defaults on missing/corrupt);
+  // save validates the payload is an object, then writes it ({ ok } / { ok:false, reason }).
+  ipcMain.handle('config:load', () => store.load(configPath()));
+  ipcMain.handle('config:save', (_event, config) => {
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      return { ok: false, reason: 'invalid', message: 'config must be an object.' };
+    }
+    return store.save(configPath(), config);
+  });
 }
 
 module.exports = { setupIpc };

@@ -76,4 +76,11 @@ contextBridge.exposeInMainWorld('launcher', {
       return () => ipcRenderer.removeListener('vpn:tick', listener);
     },
   },
+  // F12 / TI1 — persist & restore the user's choices (repos/branch/env/port override/VPN
+  // probe host). The file path lives in userData and is resolved in main — the renderer only
+  // gets/sets the config object. load returns the merged config; save returns { ok }.
+  config: {
+    load: () => ipcRenderer.invoke('config:load'),
+    save: (config) => ipcRenderer.invoke('config:save', config),
+  },
 });

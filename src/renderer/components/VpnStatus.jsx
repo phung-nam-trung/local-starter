@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 // F5 / TD1 — standalone VPN panel: detect → open OpenVPN GUI + notify + poll → Skip.
 // The probe host/port (and optional exe path) are USER-ENTERED, not hardcoded (CONTEXT §9).
@@ -20,6 +20,53 @@ export default function VpnStatus() {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [skipped, setSkipped] = useState(false);
+  // F12 / TI1 — gate save-on-change until the persisted probe config is restored.
+  const loadedRef = useRef(false);
+
+  // Restore the saved VPN probe config (host/port/exePath) on mount. probePort is stored as a
+  // number|null in the config but the input holds a string, so we stringify it here.
+  useEffect(() => {
+    let active = true;
+    window.launcher.config
+      .load()
+      .then((config) => {
+        if (!active) return;
+        const vpn = config.vpn || {};
+        if (typeof vpn.probeHost === 'string') setProbeHost(vpn.probeHost);
+        if (vpn.probePort != null) setProbePort(String(vpn.probePort));
+        if (typeof vpn.exePath === 'string') setExePath(vpn.exePath);
+        loadedRef.current = true;
+      })
+      .catch(() => {
+        if (active) loadedRef.current = true;
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Persist the probe config on change (after restore), debounced so we don't write per
+  // keystroke. probePort goes back to number|null. Merge so other panels' slices survive.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const handle = setTimeout(() => {
+      const portNum = probePort.trim() === '' ? null : Number(probePort);
+      window.launcher.config
+        .load()
+        .then((config) =>
+          window.launcher.config.save({
+            ...config,
+            vpn: {
+              probeHost: probeHost.trim(),
+              probePort: Number.isFinite(portNum) ? portNum : null,
+              exePath: exePath.trim(),
+            },
+          })
+        )
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [probeHost, probePort, exePath]);
 
   // Subscribe to poll ticks for the whole panel lifetime. The final tick (final:true) carries
   // the poll outcome ({ ok, timedOut, cancelled }).

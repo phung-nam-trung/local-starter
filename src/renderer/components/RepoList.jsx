@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import BranchPicker from './BranchPicker.jsx';
 import DepsPanel from './DepsPanel.jsx';
 import EnvSelector from './EnvSelector.jsx';
@@ -9,19 +9,32 @@ import VpnStatus from './VpnStatus.jsx';
 // F1 / TA2 — list the 9 repos grouped by workspace, each with a select checkbox.
 // F2/F3 / TB2 — clicking a repo makes it "active"; the BranchPicker on the right shows
 // that repo's branch/clean status and offers Fetch / Checkout / Pull.
-// Selection state is kept here in the renderer (persisting it is TI1, not done yet).
+// F12 / TI1 — selection (selectedRepoIds + activeRepoId) is restored from the persisted config
+// on mount and saved back whenever it changes. We patch only our two slices so the other
+// components' slices (env, vpn) survive a save.
 export default function RepoList() {
   const [repos, setRepos] = useState([]);
   const [selected, setSelected] = useState(() => new Set());
   const [activeId, setActiveId] = useState(null); // repo whose branches show in the picker
   const [error, setError] = useState(null);
+  // Gate the save-on-change effect until the initial load is done, so restoring the config
+  // doesn't immediately write it back (no save/load render loop).
+  const loadedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
-    window.launcher
-      .listRepos()
-      .then((list) => {
-        if (active) setRepos(list);
+    // Load the repo list and the persisted selection in parallel; apply the saved slices once.
+    Promise.all([window.launcher.listRepos(), window.launcher.config.load()])
+      .then(([list, config]) => {
+        if (!active) return;
+        setRepos(list);
+        const valid = new Set(list.map((r) => r.id));
+        const savedIds = (config.selectedRepoIds || []).filter((id) => valid.has(id));
+        setSelected(new Set(savedIds));
+        if (config.activeRepoId && valid.has(config.activeRepoId)) {
+          setActiveId(config.activeRepoId);
+        }
+        loadedRef.current = true;
       })
       .catch((err) => {
         if (active) setError(String(err));
@@ -30,6 +43,24 @@ export default function RepoList() {
       active = false;
     };
   }, []);
+
+  // Persist selection slices on change (after the initial load). Merge over the current
+  // on-disk config so we never clobber env/vpn written by the other panels.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    window.launcher.config
+      .load()
+      .then((config) =>
+        window.launcher.config.save({
+          ...config,
+          selectedRepoIds: Array.from(selected),
+          activeRepoId: activeId,
+        })
+      )
+      .catch(() => {
+        // Persistence is best-effort; a failed save must not break the UI.
+      });
+  }, [selected, activeId]);
 
   function toggle(id) {
     setSelected((prev) => {

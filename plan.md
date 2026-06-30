@@ -137,7 +137,7 @@ UI (renderer React) ⇄ **IPC** ⇄ **Orchestrator (Node, UI-agnostic)** ⇄ h�
   - Deps: TF1
 
 ### Phase I — Persist config (F12)
-- [ ] **TI1: Lưu & khôi phục lựa chọn**
+- [x] **TI1: Lưu & khôi phục lựa chọn**
   - Acceptance: lưu repo đã chọn, branch, env (prod/test), port override, VPN probe host vào config; mở lại app → khôi phục đúng.
   - Verify: chọn cấu hình → tắt mở app → cấu hình còn nguyên.
   - Files: `src/main/orchestrator/store.js`, `ipc.js`.

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 const CHOICES = [
   { id: 'prod', label: 'prod' },
@@ -11,6 +11,8 @@ export default function EnvSelector() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  // F12 / TI1 — gate save-on-change until the persisted env is restored (avoid write-on-load).
+  const loadedRef = useRef(false);
 
   async function loadStatus(active = true) {
     try {
@@ -26,10 +28,30 @@ export default function EnvSelector() {
     let active = true;
     setError(null);
     loadStatus(active);
+    // Restore the saved env choice (prod/test). Defaults stay 'prod' if nothing saved.
+    window.launcher.config
+      .load()
+      .then((config) => {
+        if (!active) return;
+        if (config.env === 'prod' || config.env === 'test') setSelectedEnv(config.env);
+        loadedRef.current = true;
+      })
+      .catch(() => {
+        if (active) loadedRef.current = true;
+      });
     return () => {
       active = false;
     };
   }, []);
+
+  // Persist the env choice on change (after restore). Merge so other panels' slices survive.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    window.launcher.config
+      .load()
+      .then((config) => window.launcher.config.save({ ...config, env: selectedEnv }))
+      .catch(() => {});
+  }, [selectedEnv]);
 
   async function applyEnv() {
     setBusy(true);
