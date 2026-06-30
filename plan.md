@@ -3,6 +3,16 @@
 > Sinh bởi Leader. Nguồn ngữ cảnh: `ai/CONTEXT.md` + README/`package.json` **thực tế** đã verify (selfpointrest, loyalty, token-service, indexer, public/{backend,frontend,mobile,collection}, new-frontend/apps/stor-web/project.json, new-frontend/package.json).
 > Ngày tạo: 2026-06-29 · Tác giả: Leader (AI)
 
+> ## 🤝 HANDOFF — Claude đã làm đến **TG1** (cập nhật 2026-06-30)
+> Phiên Codex trước hết token; Claude tiếp tục theo cùng pipeline Leader→Coder→Reviewer.
+> - **Đã xong + verify PASS + commit & push lên `main` (11/16):** TA1, TA2, TB1, TB2, TC1, TD1, TE1, TF1, TF2, TF3, TG1.
+>   - Mỗi commit có hậu tố `(reviewed PASS)` = đã qua Reviewer agent **hoặc** Leader focused re-verify (kèm output) → đáng tin để build tiếp.
+>   - Mốc lưu ý: TF1 đã fix BLOCKER **build-only guard** (backend/frontend không start ở engine level). **token-service nghe 4001** qua `.env` (không trùng loyalty 4000) — đã sửa registry + CONTEXT §3/§8/§12.
+> - **Chưa làm:** TH1 (log stream + status table), TH2 (stop/stop-all tree-kill + free port), TI1 (persist config — `store.js`), TJ1 (đóng gói + README). TG2 (REST-only toggle) = **optional**.
+> - **Quy ước tin cậy (CLAUDE.md §7):** chỉ tin checkbox `[x]` khi commit tương ứng có `(reviewed PASS)`; nếu chỉ tick mà thiếu bằng chứng → cần review lại.
+> - **Ràng buộc verify an toàn đã áp dụng (giữ nguyên cho Codex):** KHÔNG launch server/VPN/GUI thật (cần VPN/DB) → runner/ports/vpn verify bằng **synthetic process + static `describeRun`**; indexer patch verify trên **BẢN COPY** (file `repositories/*` thật nguyên vẹn).
+> - **Next đề xuất:** TH1 → TH2 (cùng chạm `runner.js` → làm tuần tự tránh xung đột) → TI1 → TJ1. Đọc CONTEXT §10–§12 trước khi code.
+
 ## 0. Tóm tắt
 
 Xây **Local Dev Launcher** — một desktop app cho 1 dev nội bộ (Windows) để khởi động môi trường local SelfPoint: chọn repo (trong 9 repo của 2 workspace) → chọn branch → fetch/pull → cài deps còn thiếu → bật & chờ VPN → chọn env cho selfpointrest → build/run đúng thứ tự → stream log → **stop/restart**. Đầu ra cuối: một app chạy được (`npm start`) quản lý vòng đời tất cả repo từ một cửa sổ.
