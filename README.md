@@ -4,6 +4,8 @@ Bộ **prompt + workflow** giúp **Claude Code** và **Codex** tự xây một a
 
 > ⚠️ Repo này **không chứa** launcher. Nó chứa *cách để AI tạo ra launcher*: một file context chuẩn + 3 vai trò (Leader/Coder/Reviewer) + tích hợp sẵn cho Claude Code và Codex. Stack của launcher sẽ do **Leader** đề xuất trong `plan.md`.
 
+> 🚀 **Chỉ muốn CHẠY app launcher** (Electron) chứ không quan tâm AI pack? Xem [`LAUNCHER.md`](./LAUNCHER.md) — prerequisites (Node 20.x, corepack/pnpm, OpenVPN GUI + file `.ovpn` từ team), `npm install` → `npm start`, và đầy đủ tính năng F1–F12 + lưu ý port/VPN.
+
 ## Mô hình hoạt động
 
 ```
