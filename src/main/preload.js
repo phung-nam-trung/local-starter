@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('launcher', {
     restart: (repoId, options) => ipcRenderer.invoke('runner:restart', repoId, options),
     stop: (repoId) => ipcRenderer.invoke('runner:stop', repoId),
     status: (repoId) => ipcRenderer.invoke('runner:status', repoId),
+    // TH1 — one snapshot for every repo (status table dashboard). In-memory, cheap to poll.
+    statusAll: () => ipcRenderer.invoke('runner:statusAll'),
     describe: (repoId, options) => ipcRenderer.invoke('runner:describe', repoId, options),
     onLog: (handler) => {
       const listener = (_event, payload) => handler(payload);

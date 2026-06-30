@@ -198,6 +198,9 @@ function setupIpc() {
 
   ipcMain.handle('runner:stop', (_event, repoId) => runner.stop(repoId));
   ipcMain.handle('runner:status', (_event, repoId) => runner.getStatus(repoId));
+  // TH1 — status table polls this for an in-memory snapshot of EVERY repo at once
+  // (one IPC call instead of nine). Returns a serializable array; never spawns anything.
+  ipcMain.handle('runner:statusAll', () => runner.getAllStatuses());
   ipcMain.handle('runner:describe', (_event, repoId, options = {}) =>
     // Cherry-pick safe fields only (like start/restart) — never forward the test-only
     // commandOverride/cwd hooks from the renderer into the command preview.

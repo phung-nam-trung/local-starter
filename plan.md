@@ -125,7 +125,7 @@ UI (renderer React) ⇄ **IPC** ⇄ **Orchestrator (Node, UI-agnostic)** ⇄ h�
   - Deps: TG1
 
 ### Phase H — Stop & Status & Logs (F9, F11)
-- [ ] **TH1: Log streaming + bảng trạng thái**
+- [x] **TH1: Log streaming + bảng trạng thái**
   - Acceptance: mỗi repo có panel log (stream stdout/stderr realtime); bảng trạng thái hiển thị state + port + branch hiện tại; cập nhật khi process crash.
   - Verify: start 1 repo → log chảy realtime; kill process ngoài app → state chuyển `crashed`.
   - Files: `src/renderer/components/LogPane.jsx`, `StatusTable.jsx`, `src/main/orchestrator/runner.js`.

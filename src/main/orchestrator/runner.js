@@ -22,7 +22,7 @@
 // Every exported function returns a SERIALIZABLE plain object and never throws across IPC.
 
 const { spawn, execFile } = require('node:child_process');
-const { getRepo } = require('./repos');
+const { getRepo, repos } = require('./repos');
 const { isPortBusy, repoForPort } = require('./ports');
 
 const isWin = process.platform === 'win32';
@@ -579,6 +579,14 @@ function getStatus(repoId) {
   return snapshot(entry, repo);
 }
 
+// getAllStatuses() — serializable snapshot for EVERY repo in the registry (TH1 status table).
+// Reuses getStatus so each row follows the same contract; a repo that was never started has
+// no runners entry and therefore resolves to a 'stopped' snapshot with its default port.
+// In-memory only (no git/process spawn) — cheap enough for the UI to poll on an interval.
+function getAllStatuses() {
+  return repos.map((repo) => getStatus(repo.id));
+}
+
 // Build the exact command sequence a repo WOULD run, without spawning anything. Used by
 // the UI to show the plan and by static verification (TF1 safety: assemble selfpointrest's
 // command chain without executing it).
@@ -611,5 +619,6 @@ module.exports = {
   stop,
   restart,
   getStatus,
+  getAllStatuses,
   describeRun,
 };
