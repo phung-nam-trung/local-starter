@@ -14,18 +14,26 @@ Xây một **app "Local Dev Launcher"** giúp dev khởi động môi trường 
 
 ## 2. Hai workspace & đường dẫn
 
-| Workspace | Đường dẫn tuyệt đối | Package manager | Node | Tooling |
-|---|---|---|---|---|
-| **sp-local-workspace** | `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace` | **npm** | **20.18.0** | build/init UI orchestrate qua `servers/selfpointrest` (script `build-backend`/`build-kikar`/`build-prutah`/`build-mobile`/`build-collection`, `init-*`) |
-| **new-frontend** | `C:\Users\TrungPhung\Downloads\repositories\new-frontend` | **pnpm@10.12.1** | **20+** | Nx 22 monorepo, Next.js 16, Husky |
+Launcher quản lý 2 **workspace root** bên ngoài repo này. Từ Phase K, các root này **cấu hình được** trong app thay vì chỉ hardcode theo máy hiện tại:
 
-> Launcher đặt ở `C:\Users\TrungPhung\Downloads\personal-trung-phung\local-starter` và **quản lý các repo bên ngoài** qua đường dẫn tuyệt đối ở trên. Không di chuyển/sửa file bên trong `repositories/*` ngoài những gì đặc tả ở đây (đổi tên `.env`, sửa code indexer).
+- Config rỗng/config cũ → launcher resolve bằng fallback mặc định trước; nếu root resolved (fallback hoặc user đã lưu) không hợp lệ thì `WorkspaceSettings` hiển thị onboarding và **chặn Start/Build/Install** tới khi chọn đủ 2 root hợp lệ.
+- User chọn thư mục bằng folder picker IPC `workspace:pickFolder`, hoặc nhập tay rồi lưu qua `workspace:setRoots`.
+- Root được lưu trong config `workspaceRoots.spLocalWorkspace` và `workspaceRoots.newFrontend`; `repos.js` apply root hiện hành để tính `path`/`installCwd`/`runCwd`.
+- Validation dùng `store.validateRoot`: `sp-local-workspace` cần marker `servers/selfpointrest` + `public`; `new-frontend` cần `apps/stor-web` + (`nx.json` hoặc `pnpm-lock.yaml`).
+- Nếu config chưa có root (config cũ/back-compat), launcher fallback về đường dẫn mặc định dưới đây.
+
+| Workspace | Persisted config field | Fallback mặc định | Package manager | Node | Tooling |
+|---|---|---|---|---|---|
+| **sp-local-workspace** | `workspaceRoots.spLocalWorkspace` | `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace` | **npm** | **20.18.0** | build/init UI orchestrate qua `servers/selfpointrest` (script `build-backend`/`build-kikar`/`build-prutah`/`build-mobile`/`build-collection`, `init-*`) |
+| **new-frontend** | `workspaceRoots.newFrontend` | `C:\Users\TrungPhung\Downloads\repositories\new-frontend` | **pnpm@10.12.1** | **20+** | Nx 22 monorepo, Next.js 16, Husky |
+
+> Launcher đặt ở `C:\Users\TrungPhung\Downloads\personal-trung-phung\local-starter` và **quản lý các repo bên ngoài** qua workspace root user chọn (hoặc fallback mặc định). Không di chuyển/sửa file bên trong managed workspace ngoài những gì đặc tả ở đây (đổi tên `.env`, sửa code indexer).
 
 ---
 
 ## 3. Bảng repo (sự thật đã verify từ README + package.json)
 
-Tất cả đường dẫn dưới đây tương đối so với `repositories/`.
+Tất cả đường dẫn dưới đây tương đối so với workspace root tương ứng ở §2.
 
 ### 3.1 sp-local-workspace — Backend (servers)
 
@@ -148,34 +156,38 @@ Repo này **không chạy "ngay"** mà thường cần chỉnh test trước:
 
 ---
 
-## 9. VPN (Azure VPN qua OpenVPN GUI)
+## 9. VPN (Azure VPN; client theo OS)
 
-- OpenVPN GUI có sẵn: `C:\Program Files\OpenVPN\bin\openvpn-gui.exe`.
-- Thư mục config `C:\Program Files\OpenVPN\config\` hiện **rỗng** (chưa import `.ovpn`). README sp-local-workspace ghi: tải Azure VPN + xin file `.ovpn` từ đồng đội rồi import.
 - Backend (selfpointrest, loyalty, indexer, token-service) cần VPN để truy cập DB/ES nội bộ. UI thuần (build/serve) thì không.
+- Launcher **không** tự lấy/import file `.ovpn` hoặc profile VPN. User phải chuẩn bị client/profile riêng theo OS.
+- Windows default: OpenVPN GUI `C:\Program Files\OpenVPN\bin\openvpn-gui.exe`; thư mục config `C:\Program Files\OpenVPN\config\` có thể rỗng lúc đầu, cần import `.ovpn` thủ công từ team.
+- macOS default: `open -a Tunnelblick` (có thể override bằng config).
+- Linux: không có default an toàn; user cấu hình `vpn.clientPath`/`vpn.clientArgs` (vd `nmcli`, `openvpn3`, hoặc client nội bộ). `vpn.exePath` cũ vẫn là alias back-compat cho `clientPath`.
 
 **Flow VPN mong muốn của launcher:**
 1. **Detect** đã kết nối VPN chưa. Cách khả dĩ (Leader chọn & cấu hình được):
-   - Kiểm tra network adapter kiểu TAP/OpenVPN đang `Up` (`Get-NetAdapter`), **hoặc**
-   - TCP-connect tới một **host:port nội bộ** (vd host DB lấy từ `.env`, hoặc một internal URL) — đây là cách đáng tin nhất. Host probe này nên là **config** do user nhập, không hardcode.
-2. Nếu **chưa** kết nối → chạy `openvpn-gui.exe` (nếu chưa chạy) và **hiển thị thông báo "Hãy đăng nhập VPN"**.
+   - TCP-connect tới một **host:port nội bộ** (vd host DB lấy từ `.env`, hoặc một internal URL) — đây là cách đáng tin nhất và là detection chính. Host probe này nên là **config** do user nhập, không hardcode.
+   - Nếu không có probe host → fallback kiểm adapter theo OS: Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`.
+2. Nếu **chưa** kết nối → chạy VPN client theo OS/config (`launchVpnClient` với `clientPath`/`clientArgs`) và **hiển thị thông báo "Hãy đăng nhập VPN"**. Trên Linux nếu chưa cấu hình client, báo rõ để user nhập `clientPath`/`clientArgs`.
 3. **Poll** (vd mỗi 2–3s, có timeout) tới khi probe thành công → mới tiếp tục start backend.
 4. Cho phép user **bỏ qua** VPN nếu chỉ chạy UI (build/serve không cần DB).
 
-> Launcher **không** tự lấy/ import file `.ovpn` (cần file riêng từ team). Chỉ detect + mở GUI + chờ.
+> Launcher chỉ detect + mở/focus client + chờ; không quản lý secret/profile VPN.
 
 ---
 
 ## 10. Quy tắc cho mọi AI agent (Claude Code & Codex)
 
 1. **Luôn verify trước khi tin.** Trước khi đưa một lệnh build/run vào plan hoặc code, MỞ `package.json` (và README) của repo đó để xác nhận script còn đúng. README + `package.json` thực tế **thắng** CONTEXT nếu lệch — và khi lệch, ghi chú lại để cập nhật CONTEXT.
-2. **Windows / PowerShell.** Máy chạy Windows 11. Lệnh shell mặc định là PowerShell; cũng có Git Bash. Chú ý: đường dẫn có space → bọc nháy; spawn process con của npm/pnpm phải **kill cả cây process** khi stop (npm/gulp/next spawn nhiều process con). Dùng `taskkill /T /F /PID` hoặc tree-kill tương đương.
-3. **Process management.** Các lệnh start là **long-running dev server**. Launcher phải: spawn (kèm `cwd` đúng repo), capture stdout/stderr để stream log, lưu PID, hỗ trợ **stop từng repo** và **stop all**, **restart** (đặc biệt indexer §7). Xử lý cả khi process tự chết (crash) → cập nhật trạng thái.
-4. **Cài dependencies "còn thiếu".** Mặc định chỉ `install` khi cần (vd `node_modules` chưa có, hoặc lockfile mới hơn `node_modules`). Cho phép user ép cài lại. new-frontend chạy **Husky** khi `pnpm install` → coi chừng hook lỗi làm install fail (cần xử lý/giải thích).
-5. **Node version.** sp-local-workspace cần Node 20.18.0; new-frontend cần Node 20+. Nếu user dùng nvm-windows, launcher nên kiểm tra version và cảnh báo nếu lệch. pnpm nên bật qua `corepack enable`.
-6. **Bí mật.** KHÔNG in/log nội dung `.env*`. KHÔNG commit secret. KHÔNG hardcode credential.
-7. **Phạm vi.** KHÔNG mở rộng ngoài task được giao. KHÔNG refactor lan man. KHÔNG commit/push trừ khi user yêu cầu.
-8. **Idempotent & an toàn.** Mọi thao tác sửa file trong `repositories/*` (đổi `.env`, patch indexer) phải idempotent, có backup, và không phá working tree git.
+2. **Shell & package-manager theo OS.** Môi trường hiện đã verify chính trên Windows 11, nhưng code phải giữ đúng cho Windows/macOS/Linux. Đường dẫn có space phải được truyền an toàn (ưu tiên `cwd`/args thay vì ghép chuỗi). `npm.cmd`/`pnpm.cmd` chỉ dùng trên Windows (`platform.pmCommand`); macOS/Linux dùng `npm`/`pnpm`. pnpm nên bật qua `corepack enable`.
+3. **Process management cross-platform.** Các lệnh start là **long-running dev server**. Launcher phải spawn với `cwd` đúng repo, capture stdout/stderr để stream log, lưu PID, hỗ trợ **stop từng repo**, **stop all**, **restart** (đặc biệt indexer §7), và xử lý process tự chết (crash) → cập nhật trạng thái. Stop phải kill **cả cây process**: Windows dùng `taskkill /PID <pid> /T /F`; POSIX (macOS/Linux) spawn long-running process với `detached:true`, rồi kill process group bằng `SIGTERM` → timeout → `SIGKILL`.
+4. **Mở file/editor theo OS.** Không hardcode `cmd /c start` ngoài Windows. Dùng helper tương đương `platform.openPath`: Windows `cmd /c start "" <path>`, macOS `open <path>`, Linux `xdg-open <path>`.
+5. **VPN client theo OS.** TCP probe `host:port` là detection chính khi user cấu hình. Adapter fallback theo OS: Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`; lỗi phải trả `connected:false`, không throw. Launch VPN qua `vpn.clientPath`/`vpn.clientArgs` (giữ `exePath` cũ là alias): Windows default OpenVPN GUI, macOS default `open -a Tunnelblick`, Linux bắt buộc user cấu hình client (`nmcli`/`openvpn3`/client khác).
+6. **Cài dependencies "còn thiếu".** Mặc định chỉ `install` khi cần (vd `node_modules` chưa có, hoặc lockfile mới hơn `node_modules`). Cho phép user ép cài lại. new-frontend chạy **Husky** khi `pnpm install` → coi chừng hook lỗi làm install fail (cần xử lý/giải thích).
+7. **Node version.** sp-local-workspace cần Node 20.18.0; new-frontend cần Node 20+. Nếu user dùng nvm/nvm-windows/asdf, launcher nên kiểm tra version và cảnh báo nếu lệch.
+8. **Bí mật.** KHÔNG in/log nội dung `.env*`. KHÔNG commit secret. KHÔNG hardcode credential.
+9. **Phạm vi.** KHÔNG mở rộng ngoài task được giao. KHÔNG refactor lan man. KHÔNG commit/push trừ khi user yêu cầu.
+10. **Idempotent & an toàn.** Mọi thao tác sửa file trong managed workspace (đổi `.env`, patch indexer) phải idempotent, có backup, và không phá working tree git.
 
 ---
 
@@ -187,14 +199,14 @@ Launcher (bất kể stack nào) phải làm được:
 - [ ] **F2 — Chọn branch:** với mỗi repo đã chọn, hiển thị branch picker, preselect mặc định (§4), cho đổi branch.
 - [ ] **F3 — Fetch & Pull:** `git fetch --all --prune` + checkout + pull an toàn (§4), báo lỗi rõ ràng nếu working tree bẩn; cho phép user xác nhận `reset --hard HEAD` hoặc discard local changes để unblock checkout/pull.
 - [ ] **F4 — Install deps:** cài **khi thiếu** (npm cho sp-local-workspace, pnpm ở root cho new-frontend), có nút ép cài lại; xử lý postinstall (gulp buildAll / bower) và Husky (§10).
-- [ ] **F5 — VPN:** detect → nếu chưa kết nối thì mở OpenVPN GUI + thông báo + poll tới khi kết nối (§9); cho bỏ qua nếu chỉ chạy UI.
+- [ ] **F5 — VPN:** detect → nếu chưa kết nối thì mở VPN client theo OS/config + thông báo + poll tới khi kết nối (§9); cho bỏ qua nếu chỉ chạy UI.
 - [ ] **F6 — Env selfpointrest:** chọn prod/test (mặc định prod), copy → `.env` có backup, đảm bảo `clients_dir` (§5).
 - [ ] **F7 — Build & Run đúng thứ tự:** theo §12; build UI trước khi selfpointrest serve; override port khi trùng (§8).
 - [ ] **F8 — Indexer:** hỗ trợ sửa `test/products.js` & `test/specials.js` (mở file hoặc patch preset) + **restart** (§7).
 - [ ] **F9 — Stop all:** dừng toàn bộ process đã start (kill cả cây process), giải phóng port.
 - [ ] **F10 — Restart:** restart từng repo (đặc biệt indexer).
 - [ ] **F11 — Log & trạng thái:** stream log mỗi repo; hiển thị trạng thái (stopped / installing / building / running / crashed) + port + branch hiện tại.
-- [ ] **F12 — Lưu cấu hình:** nhớ lựa chọn lần trước (repo, branch, env, port override, VPN probe host) để lần sau nhanh hơn.
+- [ ] **F12 — Lưu cấu hình:** nhớ lựa chọn lần trước (workspace roots, repo, branch, env, port override, VPN probe host, VPN client path/args) để lần sau nhanh hơn.
 
 ---
 

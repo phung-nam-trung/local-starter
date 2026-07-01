@@ -27,6 +27,7 @@ export default function StatusTable() {
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [error, setError] = useState(null);
   const [stopping, setStopping] = useState(null); // repoId currently being stopped
+  const [restarting, setRestarting] = useState(null); // repoId currently being restarted
   const [stoppingAll, setStoppingAll] = useState(false); // Stop all in flight
   const [stopAllMsg, setStopAllMsg] = useState(null); // short result of the last Stop all
   // Latest repo list for callbacks (avoids re-creating refreshBranches on every repos change).
@@ -107,6 +108,20 @@ export default function StatusTable() {
       setError(String(err));
     } finally {
       setStopping(null);
+    }
+  }
+
+  async function onRestart(repoId) {
+    setRestarting(repoId);
+    try {
+      const res = await window.launcher.runner.restart(repoId, {});
+      if (res && res.status) {
+        setStatusById((prev) => ({ ...prev, [repoId]: res.status }));
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRestarting(null);
     }
   }
 
@@ -195,6 +210,8 @@ export default function StatusTable() {
             const port = s && s.port != null ? s.port : repo.port;
             const branch = branchById[repo.id];
             const running = state === 'running' || state === 'building' || state === 'starting';
+            const isStorWeb = repo.id === 'stor-web';
+            const rowBusy = stopping === repo.id || restarting === repo.id;
             return (
               <tr key={repo.id} style={styles.tr}>
                 <td style={styles.td}>
@@ -213,12 +230,25 @@ export default function StatusTable() {
                   {s && s.step ? <span style={styles.muted}>{s.step}</span> : <span style={styles.muted}>-</span>}
                 </td>
                 <td style={styles.tdActions}>
-                  {running ? (
-                    <button
-                      type="button"
-                      onClick={() => onStop(repo.id)}
-                      disabled={stopping === repo.id}
-                    >
+                  {isStorWeb ? (
+                    <div style={styles.actionRow}>
+                      <button
+                        type="button"
+                        onClick={() => onStop(repo.id)}
+                        disabled={!running || rowBusy}
+                      >
+                        {stopping === repo.id ? 'Stopping...' : 'Stop'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRestart(repo.id)}
+                        disabled={rowBusy}
+                      >
+                        {restarting === repo.id ? 'Restarting...' : 'Restart'}
+                      </button>
+                    </div>
+                  ) : running ? (
+                    <button type="button" onClick={() => onStop(repo.id)} disabled={stopping === repo.id}>
                       {stopping === repo.id ? 'Stopping...' : 'Stop'}
                     </button>
                   ) : null}
@@ -275,6 +305,11 @@ const styles = {
     padding: '0.35rem 0.5rem',
     textAlign: 'right',
     verticalAlign: 'middle',
+  },
+  actionRow: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '0.4rem',
   },
   badge: {
     display: 'inline-block',

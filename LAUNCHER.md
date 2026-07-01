@@ -8,24 +8,31 @@
 
 ## 1. Yêu cầu môi trường (Prerequisites)
 
-Chạy trên **Windows** (đã test trên Windows 11). Cần chuẩn bị:
+Launcher đã verify chính trên **Windows 11**. Code Phase K đã tách phần OS-specific để chạy trên **Windows / macOS / Linux**; Linux/macOS vẫn cần nghiệm thu end-to-end thật cho VPN client, opener và group-kill.
 
 | Thành phần | Yêu cầu | Ghi chú |
 |---|---|---|
-| **Node.js** | **20.x** | `sp-local-workspace` cần đúng **20.18.0**; `new-frontend` cần 20+. Nếu dùng nvm-windows, switch về 20.x trước khi mở app. |
-| **pnpm** | bật qua `corepack enable` | `new-frontend` (stor-web) dùng `pnpm`. Chạy `corepack enable` một lần trong PowerShell (Admin) để có `pnpm` trên PATH. |
+| **Node.js** | **20.x** | `sp-local-workspace` cần đúng **20.18.0**; `new-frontend` cần 20+. Dùng nvm/nvm-windows/asdf/Volta tùy OS, miễn `node --version` là 20.x trước khi mở app. |
 | **Git** | có trên PATH | Launcher gọi `git` CLI trực tiếp (fetch/checkout/pull/branch). |
-| **OpenVPN GUI** | `C:\Program Files\OpenVPN\bin\openvpn-gui.exe` | Backend cần VPN (Azure VPN) để truy cập DB/ES nội bộ. |
-| **File `.ovpn`** | **xin từ đồng đội** | Launcher **KHÔNG** tự import config VPN. Tải Azure VPN client + lấy file `.ovpn` từ team, import vào OpenVPN GUI thủ công một lần. Sau đó launcher chỉ **detect / mở GUI / chờ kết nối**. |
+| **pnpm** | bật qua `corepack enable` | `new-frontend` (stor-web) dùng `pnpm`. Chạy `corepack enable` một lần để có `pnpm` trên PATH. |
+| **VPN client** | theo OS | Backend cần VPN để truy cập DB/ES nội bộ. Launcher chỉ detect / mở client / chờ kết nối; không import profile hoặc secret VPN. |
 
-> ⚠️ Thư mục `C:\Program Files\OpenVPN\config\` thường rỗng lúc đầu — phải tự import `.ovpn` (xem README của `sp-local-workspace`). Đây là bước **một lần**, ngoài phạm vi launcher.
+VPN client khuyến nghị theo OS:
 
-Hai workspace mà launcher quản lý (đường dẫn cố định trong registry):
+| OS | Mặc định / gợi ý | Ghi chú |
+|---|---|---|
+| Windows | OpenVPN GUI `C:\Program Files\OpenVPN\bin\openvpn-gui.exe` | Import file `.ovpn` từ team vào OpenVPN GUI thủ công một lần. |
+| macOS | Tunnelblick (`open -a Tunnelblick`) | Có thể override trong VPN panel bằng `clientPath`/`clientArgs` nếu dùng client khác. |
+| Linux | cấu hình trong VPN panel, ví dụ `nmcli`, `openvpn3`, hoặc `openvpn` | Không có default an toàn; cần nhập `VPN client path/command` và args phù hợp với máy. |
 
-| Workspace | Đường dẫn | PM | Branch mặc định |
+Hai workspace mà launcher quản lý được chọn trong app:
+
+| Workspace | Persisted config field | Fallback mặc định | Marker validate |
 |---|---|---|---|
-| sp-local-workspace | `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace` | npm | `master` |
-| new-frontend | `C:\Users\TrungPhung\Downloads\repositories\new-frontend` | pnpm (Nx) | `new-frontend-dev-prod` |
+| sp-local-workspace | `workspaceRoots.spLocalWorkspace` | `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace` | `servers/selfpointrest` + `public` |
+| new-frontend | `workspaceRoots.newFrontend` | `C:\Users\TrungPhung\Downloads\repositories\new-frontend` | `apps/stor-web` + `nx.json` hoặc `pnpm-lock.yaml` |
+
+Nếu chưa cấu hình, app thử fallback về đường dẫn mặc định để tương thích config cũ. Nếu fallback hoặc root đã lưu không hợp lệ, onboarding sẽ yêu cầu chọn 2 root hợp lệ trước khi cho Start/Build/Install.
 
 ---
 
@@ -33,7 +40,7 @@ Hai workspace mà launcher quản lý (đường dẫn cố định trong regist
 
 ```powershell
 # 1. Vào thư mục launcher
-cd C:\Users\TrungPhung\Downloads\personal-trung-phung\local-starter
+cd <path-to-local-starter>
 
 # 2. Cài dependencies của launcher (electron, vite, react)
 npm install
@@ -61,16 +68,17 @@ npm start
 ### Lần đầu trước khi bấm Start
 
 1. Mở app bằng `npm start`.
-2. Kiểm tra danh sách repo ở cột trái. Nếu không thấy đủ 9 repo, kiểm tra lại 2 workspace:
-   - `C:\Users\TrungPhung\Downloads\repositories\sp-local-workspace`
-   - `C:\Users\TrungPhung\Downloads\repositories\new-frontend`
-3. Chọn repo muốn chạy. Click vào từng repo để mở panel chi tiết ở cột phải.
-4. Ở **Branch**, bấm **Fetch**, chọn branch cần dùng, rồi **Checkout/Pull**. Nếu app báo repo đang dirty, hãy commit/stash thủ công trong repo đó trước.
-5. Ở **Deps**, bấm **Check deps**. Nếu thiếu hoặc stale, bấm **Install if needed**. Dùng **Force reinstall** khi muốn ép cài lại.
-6. Nếu chạy backend, vào **VPN**, nhập probe host/port nội bộ nếu có, bấm **Check** hoặc **Connect**, đăng nhập OpenVPN khi GUI mở lên. Nếu chỉ chạy UI thuần, có thể bấm **Skip**.
-7. Nếu chạy `selfpointrest`, vào **Env - selfpointrest**, chọn `prod` hoặc `test`, rồi bấm **Apply env**.
-8. Vào **Run**, chọn tùy chọn build cần thiết rồi bấm **Build & Start**. Theo dõi log ngay trong app.
-9. Khi xong việc, dùng **Stop** cho từng repo hoặc **Stop all** để dừng toàn bộ process con.
+2. Nếu app hiện onboarding **Cấu hình vị trí 2 workspace**, chọn hoặc nhập 2 root:
+   - `sp-local-workspace` phải có `servers/selfpointrest` và `public`.
+   - `new-frontend` phải có `apps/stor-web` và `nx.json` hoặc `pnpm-lock.yaml`.
+3. Bấm **Save** cho từng root. Khi cả hai root `valid`, app mới hiện StatusTable/RepoList.
+4. Chọn repo muốn chạy. Click vào từng repo để mở panel chi tiết ở cột phải.
+5. Ở **Branch**, bấm **Fetch**, chọn branch cần dùng, rồi **Checkout/Pull**. Nếu app báo repo đang dirty, hãy commit/stash hoặc dùng hành động reset/discard có xác nhận trong BranchPicker.
+6. Ở **Deps**, bấm **Check deps**. Nếu thiếu hoặc stale, bấm **Install if needed**. Dùng **Force reinstall** khi muốn ép cài lại.
+7. Nếu chạy backend, vào **VPN**, nhập probe host/port nội bộ nếu có, cấu hình client path/args nếu OS cần, bấm **Check** hoặc **Connect**, rồi đăng nhập VPN trong client. Nếu chỉ chạy UI thuần, có thể bấm **Skip**.
+8. Nếu chạy `selfpointrest`, vào **Env - selfpointrest**, chọn `prod` hoặc `test`, rồi bấm **Apply env**.
+9. Vào **Run**, chọn tùy chọn build cần thiết rồi bấm **Build & Start**. Theo dõi log ngay trong app.
+10. Khi xong việc, dùng **Stop** cho từng repo hoặc **Stop all** để dừng toàn bộ process con.
 
 ### Luồng thường dùng
 
@@ -120,18 +128,18 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 
 | # | Tính năng | Ở đâu trong UI | Mô tả |
 |---|---|---|---|
-| **F1** | Chọn repo | StatusTable + RepoList | Danh sách 9 repo, nhóm theo workspace; chọn 1 hoặc nhiều repo để vận hành. |
+| **F1** | Chọn repo | WorkspaceSettings + StatusTable + RepoList | Xác nhận 2 workspace root resolved hợp lệ (fallback hoặc user chọn), rồi xem danh sách 9 repo nhóm theo workspace; chọn 1 hoặc nhiều repo để vận hành. |
 | **F2** | Chọn branch | BranchPicker (mỗi repo) | Picker hiển thị branch local + remote, **preselect** mặc định (`master` / `new-frontend-dev-prod`); nếu default không tồn tại → chọn từ list thật. |
 | **F3** | Fetch & Pull | BranchPicker | `git fetch --all --prune` → checkout → pull **an toàn** (chỉ pull khi working tree sạch; bẩn → cảnh báo, không overwrite). |
 | **F4** | Install deps | DepsPanel | Cài **khi thiếu/stale** (npm trong từng repo `sp`; `pnpm install` ở **root** `new-frontend`); nút **force reinstall**; stream output; báo lỗi rõ nếu postinstall (gulp buildAll/bower) hoặc Husky fail. |
-| **F5** | VPN | VpnStatus | Detect VPN (probe TCP `host:port` nội bộ — **bạn tự nhập** host probe; fallback `Get-NetAdapter`). Nếu down → mở `openvpn-gui.exe` + **native notification** "Hãy đăng nhập VPN" + poll tới khi up. Có nút **Skip** (chỉ chạy UI thì không cần VPN). |
+| **F5** | VPN | VpnStatus | Detect VPN bằng probe TCP `host:port` nội bộ — **bạn tự nhập** host probe; nếu không có probe thì fallback adapter theo OS (Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`). Nếu down → mở VPN client theo OS/config (`clientPath`/`clientArgs`) + **native notification** "Hãy đăng nhập VPN" + poll tới khi up. Có nút **Skip** (chỉ chạy UI thì không cần VPN). |
 | **F6** | Env selfpointrest | EnvSelector | Chọn **prod / test** (mặc định **prod**) → backup `.env` hiện tại (`.env.bak-<timestamp>`) → copy `.env-prod`/`.env-test` → `.env`; đảm bảo `clients_dir="../../public"`. **Không in nội dung `.env` ra log.** |
 | **F7** | Build & Run | RunControls | Build/run đúng thứ tự. selfpointrest: install→`buildAll`→(tùy chọn build UI Back Office/Kikar/Prutah qua script selfpointrest)→`npm start` (3000). Override `PORT` khi trùng. |
 | **F8** | Indexer edits | IndexerPanel | Mở `test/products.js` & `test/specials.js` bằng editor mặc định, **và/hoặc** nhập preset (retailerId / productIds / special) → patch **idempotent + backup**; nút **Restart** indexer. |
-| **F9** | Stop all | StatusTable / RunControls | Dừng **toàn bộ** process đã start (kill **cả cây process** bằng `taskkill /T /F`), giải phóng port. |
+| **F9** | Stop all | StatusTable / RunControls | Dừng **toàn bộ** process đã start, giải phóng port: Windows dùng `taskkill /T /F`, macOS/Linux dùng detached process group `SIGTERM` → `SIGKILL`. |
 | **F10** | Restart | RunControls / IndexerPanel | Restart từng repo (đặc biệt indexer: kill cây cũ → start lại với `--max-old-space-size=3000`). |
 | **F11** | Log & trạng thái | RunControls (log stream) + StatusTable | Mỗi repo stream stdout/stderr realtime; bảng trạng thái hiện state (`stopped/installing/building/running/crashed`) + port + branch. Process tự chết → state chuyển `crashed`. |
-| **F12** | Lưu cấu hình | tự động (store.js) | Nhớ lựa chọn lần trước (repo, branch, env, port override, VPN probe host) trong `userData` → mở lại app khôi phục đúng. |
+| **F12** | Lưu cấu hình | tự động (store.js) | Nhớ lựa chọn lần trước (workspace roots, repo, branch, env, port override, VPN probe host, VPN client path/args) trong `userData` → mở lại app khôi phục đúng. |
 
 ### Thứ tự build/run khuyến nghị
 
@@ -164,13 +172,14 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 
 - **Backend** (selfpointrest, loyalty, indexer, token-service) **cần VPN** để truy cập DB/ES nội bộ → kết nối VPN (F5) trước khi run.
 - **UI thuần** (build/serve: mobile, collection, stor-web, build UI Back Office/Frontend) **không cần VPN** → có thể **Skip** ở bước VPN.
-- VPN probe **host:port** do bạn nhập (vd host DB/ES nội bộ) — không hardcode. Launcher chỉ detect + mở GUI + chờ; **không** tự import `.ovpn`.
+- VPN probe **host:port** do bạn nhập (vd host DB/ES nội bộ) — không hardcode. Nếu không nhập probe, launcher fallback kiểm adapter theo OS.
+- VPN client mở theo OS/config: Windows OpenVPN GUI mặc định, macOS Tunnelblick mặc định, Linux cần `clientPath`/`clientArgs`. Launcher **không** tự import `.ovpn`/profile.
 
 **An toàn:**
 
 - Launcher **không bao giờ in nội dung `.env*`** ra log (chứa secret).
-- Mọi thao tác sửa file trong `repositories/*` (đổi `.env`, patch indexer) đều **idempotent + có backup**, không phá git working tree.
-- Stop = kill **cả cây process** (`taskkill /T /F`) → không để node/gulp/next mồ côi giữ port.
+- Mọi thao tác sửa file trong managed workspace (đổi `.env`, patch indexer) đều **idempotent + có backup**, không phá git working tree.
+- Stop = kill **cả cây process** → Windows `taskkill /T /F`, macOS/Linux detached process group `SIGTERM` rồi `SIGKILL` nếu cần; mục tiêu là không để node/gulp/next mồ côi giữ port.
 
 ---
 
@@ -178,36 +187,39 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 
 | Hiện tượng | Cách xử lý |
 |---|---|
-| PowerShell báo `npm.ps1 cannot be loaded because running scripts is disabled` | Chạy bằng `npm.cmd ...` thay vì `npm ...`, hoặc chỉnh Execution Policy theo policy của máy. |
+| Onboarding báo workspace root invalid/missing | Chọn đúng root: `sp-local-workspace` phải có `servers/selfpointrest` + `public`; `new-frontend` phải có `apps/stor-web` + `nx.json` hoặc `pnpm-lock.yaml`. |
+| Windows PowerShell báo `npm.ps1 cannot be loaded because running scripts is disabled` | Chạy bằng `npm.cmd ...` thay vì `npm ...`, hoặc chỉnh Execution Policy theo policy của máy. Đây chỉ là vấn đề Windows/PowerShell; macOS/Linux dùng `npm`/`pnpm` bình thường. |
 | App báo repo dirty khi Checkout/Pull | Vào repo tương ứng, tự `git status`, rồi commit/stash/discard thủ công. Launcher không tự overwrite thay đổi local. |
 | Fetch/Pull lỗi network hoặc auth | Kiểm tra VPN, quyền Git remote, token/SSH key, rồi chạy lại Fetch/Pull. |
 | Backend start lỗi DB/ES | Kiểm tra VPN đã connected thật chưa; nhập probe host/port nội bộ rồi bấm Check/Connect lại. |
-| OpenVPN GUI không mở | Kiểm tra đường dẫn `C:\Program Files\OpenVPN\bin\openvpn-gui.exe`; nếu cài chỗ khác, nhập path đúng trong VPN panel. |
+| VPN client không mở | Windows: kiểm tra OpenVPN GUI hoặc nhập path đúng. macOS: cài Tunnelblick hoặc override `clientPath`. Linux: nhập lệnh/args phù hợp (`nmcli`, `openvpn3`, `openvpn`, v.v.) trong VPN panel. |
 | `pnpm` không tìm thấy khi chạy stor-web | Chạy `corepack enable`, mở lại terminal/app, rồi thử lại. |
 | Cài deps fail ở bower/gulp/Husky | Xem log trong DepsPanel, sửa nguyên nhân trong repo con, rồi bấm Retry hoặc Force reinstall. |
 | Port bận (`EADDRINUSE`) | Dùng StatusTable/RunControls để Stop repo đang giữ port, hoặc tự kiểm bằng `netstat`. Với `mobile`/`collection`, chỉ chạy một repo trên port 9000. |
-| Stop xong vẫn còn process node/gulp/next | Dùng **Stop all**. Nếu vẫn còn, kiểm tra Task Manager và kill tay process mồ côi, rồi báo lại để kiểm tra runner. |
+| Stop xong vẫn còn process node/gulp/next | Dùng **Stop all**. Nếu vẫn còn, kiểm tra Task Manager/Activity Monitor/`ps` và kill tay process mồ côi, rồi báo lại để kiểm tra runner. |
 | selfpointrest không thấy `/backend`, `/kikar`, `/prutah` | Đảm bảo đã chọn build UI tương ứng trước khi start selfpointrest; kiểm tra `.env` có `clients_dir="../../public"`. |
 | Không muốn đụng env thật khi test | Không bấm Apply env trong selfpointrest. EnvSelector chỉ đổi `.env` khi bấm Apply và luôn backup trước. |
 
 ---
 
-## 5. Đóng gói thành app Windows (tùy chọn)
+## 5. Đóng gói cross-platform (tùy chọn)
 
-`npm start` là cách chạy chính. **Không bắt buộc** đóng gói. Nếu muốn ra file `.exe` chạy độc lập, dùng [`electron-builder`](https://www.electron.build/) — **không** thêm sẵn vào `package.json` để giữ launcher nhẹ.
+`npm start` là cách chạy chính. **Không bắt buộc** đóng gói. Nếu muốn tạo app native, dùng [`electron-builder`](https://www.electron.build/) thủ công — hiện **không** thêm sẵn vào `package.json` để giữ launcher nhẹ.
 
-```powershell
+```bash
 # 1. Build renderer ra dist/renderer (production main process nạp file này)
 npm run build:renderer
 
-# 2. Đóng gói (không lưu vào devDependencies)
-npx --yes electron-builder --win portable --config.directories.output=release `
-  --config.files="src/**/*" --config.files="dist/**/*" --config.files="package.json" `
-  --config.extraMetadata.main=src/main/main.js
+# 2. Đóng gói theo OS/target mong muốn
+npx --yes electron-builder --win portable --config.directories.output=release --config.files="src/**/*" --config.files="dist/**/*" --config.files="package.json" --config.extraMetadata.main=src/main/main.js
+npx --yes electron-builder --mac dmg --config.directories.output=release --config.files="src/**/*" --config.files="dist/**/*" --config.files="package.json" --config.extraMetadata.main=src/main/main.js
+npx --yes electron-builder --linux AppImage --config.directories.output=release --config.files="src/**/*" --config.files="dist/**/*" --config.files="package.json" --config.extraMetadata.main=src/main/main.js
 ```
 
-- Target `portable` → 1 file `.exe` chạy ngay; đổi `--win portable` thành `--win nsis` nếu muốn bộ cài.
-- ⚠️ Lần đầu `electron-builder` tải binary nền tảng (vài trăm MB) → chậm. Output ở `release/`.
+- Dùng `--win`, `--mac`, hoặc `--linux` theo nền tảng cần build; thực tế nên build target trên OS tương ứng, đặc biệt macOS nếu cần ký/notarize.
+- Windows: `portable` tạo `.exe` chạy ngay; có thể đổi thành `nsis` nếu muốn bộ cài.
+- macOS: ví dụ `dmg`; Linux: ví dụ `AppImage`.
+- Lần đầu `electron-builder` tải binary nền tảng (vài trăm MB) nên có thể chậm. Output ở `release/`.
 - Bản đóng gói chạy ở chế độ production (`app.isPackaged === true`) → nạp `dist/renderer/index.html` thay vì Vite dev server, nên **phải** chạy `build:renderer` trước.
 
-> Nếu muốn cố định cấu hình đóng gói, có thể thêm khối `"build"` (electron-builder) vào `package.json` và devDep `electron-builder` sau — hiện chưa thêm để tránh dep nặng.
+> Nếu muốn cố định cấu hình đóng gói, có thể thêm khối `"build"` (electron-builder) vào `package.json` và devDep `electron-builder` sau.
