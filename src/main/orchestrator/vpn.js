@@ -25,13 +25,22 @@
 
 const net = require('node:net');
 const fs = require('node:fs');
+const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 
-const isWin = process.platform === 'win32';
+// Resolve the OS branch. Like platform.js / killTree, every cross-platform helper takes an
+// options object so tests can FORCE a platform (options.platform) without touching the real
+// process.platform — this is how mac/linux behaviour is verified on a Windows host.
+function optionPlatform(options = {}) {
+  return options.platform || process.platform;
+}
 
-// Default OpenVPN GUI path (CONTEXT §9). Overridable via launchOpenVpnGui(exePath).
+// Default Windows VPN client (CONTEXT §9). macOS default uses the `open -a <App>` launcher;
+// Linux has no universal client so we require the user to configure one (TK6). All overridable
+// via vpn config (clientPath/clientArgs).
 const DEFAULT_OPENVPN_GUI = 'C:\\Program Files\\OpenVPN\\bin\\openvpn-gui.exe';
 const OPENVPN_GUI_IMAGE = 'openvpn-gui.exe';
+const DEFAULT_MAC_VPN_APP = 'Tunnelblick';
 
 // probe(host, port, timeoutMs) -> Promise<boolean>
 // Attempts a raw TCP connect to host:port. Resolves true when the socket connects, false on
@@ -66,66 +75,117 @@ function probe(host, port, timeoutMs = 2000) {
   });
 }
 
-// detectAdapter(execFileImpl) -> Promise<{ connected, detail? }>
-// Fallback when no probe host is configured: ask PowerShell for network adapters whose name
-// looks like TAP/OpenVPN/Wintun (the virtual adapters OpenVPN brings up) and whose Status is
-// 'Up'. Wrapped in try/catch at every layer — any failure resolves connected:false (we never
-// want adapter parsing to crash the flow). Returns the matched adapter name in `detail` only
-// (an adapter name is not a secret).
-function detectAdapter(execFileImpl = execFile) {
-  return new Promise((resolve) => {
-    if (!isWin) {
-      resolve({ connected: false, detail: 'adapter check is Windows-only' });
-      return;
-    }
+// VPN-interface name patterns. OpenVPN/WireGuard/etc. bring up a virtual adapter whose name
+// (Windows) or interface (POSIX) matches one of these — the same idea per OS, different tool.
+const VPN_IFACE_RE = /\b(?:tap|tun|utun|ppp|wg|wireguard|openvpn|wintun)\d*\b/i;
 
-    // Emit name|status lines; we parse them ourselves (robust to locale vs. relying on
-    // Get-NetAdapter's table formatting). InterfaceDescription is included so TAP/Wintun
-    // adapters whose friendly Name was renamed are still matched.
-    const script =
-      'Get-NetAdapter | ForEach-Object { "$($_.Name)|$($_.InterfaceDescription)|$($_.Status)" }';
-    const args = [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      script,
-    ];
-
-    try {
-      execFileImpl(
-        'powershell',
-        args,
-        { windowsHide: true, timeout: 8000 },
-        (err, stdout) => {
-          if (err) {
-            resolve({ connected: false, detail: 'Get-NetAdapter failed' });
-            return;
-          }
-          try {
-            const lines = String(stdout || '')
-              .split(/\r?\n/)
-              .map((l) => l.trim())
-              .filter(Boolean);
-            const re = /tap|openvpn|wintun|tun\b/i;
-            for (const line of lines) {
-              const [name = '', desc = '', status = ''] = line.split('|');
-              if (re.test(name) || re.test(desc)) {
-                if (/^up$/i.test(status.trim())) {
-                  resolve({ connected: true, detail: name || desc });
-                  return;
-                }
-              }
-            }
-            resolve({ connected: false, detail: 'no TAP/OpenVPN adapter Up' });
-          } catch (_parseErr) {
-            resolve({ connected: false, detail: 'adapter parse error' });
+// Per-OS adapter probe plan: which command to run + how to parse its output into
+// { connected, detail }. Each parser must be total (never throw) and only ever return an
+// interface NAME in `detail` (a name is not a secret).
+//
+//   win32  : PowerShell Get-NetAdapter, emitting Name|Description|Status lines (locale-robust).
+//   darwin : `ifconfig` — VPN interfaces appear as utunN/tapN/pppN; we treat a present iface
+//            that is not explicitly DOWN as up (macOS tunnels rarely print a clean status line).
+//   linux  : `ip -o link show` — each line is "<idx>: <name>: <FLAGS> ..."; a VPN iface counts
+//            as connected when its flags contain UP / state is UP.
+function adapterPlan(platformName) {
+  if (platformName === 'win32') {
+    return {
+      command: 'powershell',
+      args: [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        'Get-NetAdapter | ForEach-Object { "$($_.Name)|$($_.InterfaceDescription)|$($_.Status)" }',
+      ],
+      parse(stdout) {
+        const lines = String(stdout || '')
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        for (const line of lines) {
+          const [name = '', desc = '', status = ''] = line.split('|');
+          if (VPN_IFACE_RE.test(name) || VPN_IFACE_RE.test(desc)) {
+            if (/^up$/i.test(status.trim())) return { connected: true, detail: name || desc };
           }
         }
-      );
+        return { connected: false, detail: 'no VPN adapter Up' };
+      },
+    };
+  }
+
+  if (platformName === 'darwin') {
+    return {
+      command: 'ifconfig',
+      args: [],
+      parse(stdout) {
+        // ifconfig blocks start at column 0 with "<iface>: flags=...". A VPN iface is "up"
+        // unless its flag list lacks UP (e.g. "<UP,...>" present => active).
+        const blocks = String(stdout || '').split(/\n(?=\S)/);
+        for (const block of blocks) {
+          const header = block.split('\n')[0] || '';
+          const name = (header.split(':')[0] || '').trim();
+          if (!VPN_IFACE_RE.test(name)) continue;
+          if (/\bflags=\S*<[^>]*\bUP\b/i.test(header) || /status:\s*active/i.test(block)) {
+            return { connected: true, detail: name };
+          }
+        }
+        return { connected: false, detail: 'no VPN interface up' };
+      },
+    };
+  }
+
+  // linux (and any other POSIX): `ip -o link show` one line per iface.
+  return {
+    command: 'ip',
+    args: ['-o', 'link', 'show'],
+    parse(stdout) {
+      const lines = String(stdout || '')
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      for (const line of lines) {
+        // "<idx>: <name>: <FLAGS,...> ... state UP ..."
+        const m = line.match(/^\d+:\s*([^:@]+)[:@]/);
+        const name = m ? m[1].trim() : '';
+        if (!VPN_IFACE_RE.test(name)) continue;
+        if (/\bstate\s+UP\b/i.test(line) || /[<,]UP[,>]/i.test(line)) {
+          return { connected: true, detail: name };
+        }
+      }
+      return { connected: false, detail: 'no VPN interface UP' };
+    },
+  };
+}
+
+// detectAdapter(options) -> Promise<{ connected, detail? }>
+// Fallback when no probe host is configured: ask the OS for a VPN-style interface that is up.
+// Wrapped in try/catch at every layer — ANY failure (spawn error, non-zero exit, parse error)
+// resolves connected:false. The TCP probe stays the trustworthy signal whenever the user
+// configures a probe host (see isVpnConnected). Test hooks: options.platform forces the OS
+// branch; options.execFileImpl stubs execFile so mac/linux output can be fed in on any host.
+function detectAdapter(options = {}) {
+  const platformName = optionPlatform(options);
+  const execFileImpl = options.execFileImpl || execFile;
+  const plan = adapterPlan(platformName);
+
+  return new Promise((resolve) => {
+    try {
+      execFileImpl(plan.command, plan.args, { windowsHide: true, timeout: 8000 }, (err, stdout) => {
+        if (err) {
+          resolve({ connected: false, detail: `${plan.command} failed` });
+          return;
+        }
+        try {
+          resolve(plan.parse(stdout));
+        } catch (_parseErr) {
+          resolve({ connected: false, detail: 'adapter parse error' });
+        }
+      });
     } catch (_spawnErr) {
-      // execFile can throw synchronously in rare cases (e.g. powershell missing).
+      // execFile can throw synchronously in rare cases (e.g. the tool is missing).
       resolve({ connected: false, detail: 'adapter check unavailable' });
     }
   });
@@ -136,10 +196,11 @@ function detectAdapter(execFileImpl = execFile) {
 //   probeHost  : internal host to TCP-probe (user-configured; NOT hardcoded)
 //   probePort  : internal port to TCP-probe
 //   timeoutMs  : optional probe timeout (default 2000)
+//   platform   : TEST-ONLY hook to force the OS branch for the adapter fallback.
 //   _execFile  : TEST-ONLY hook to inject a fake execFile for the adapter fallback.
 // When a probe host+port is configured we use the TCP probe (method:'probe'). Otherwise we
-// fall back to the adapter check (method:'adapter'). If neither is possible the result is
-// connected:false, method:'none'. A configured TCP probe is authoritative: if it fails,
+// fall back to the per-OS adapter check (method:'adapter'). If neither is possible the result
+// is connected:false, method:'none'. A configured TCP probe is authoritative: if it fails,
 // adapter state must not override it.
 async function isVpnConnected(config = {}) {
   const host = config.probeHost;
@@ -163,7 +224,10 @@ async function isVpnConnected(config = {}) {
     };
   }
 
-  const adapter = await detectAdapter(config._execFile || execFile);
+  const adapter = await detectAdapter({
+    platform: config.platform,
+    execFileImpl: config._execFile,
+  });
   return {
     connected: adapter.connected,
     method: 'adapter',
@@ -171,12 +235,27 @@ async function isVpnConnected(config = {}) {
   };
 }
 
-// isOpenVpnGuiRunning(execFileImpl) -> Promise<boolean>
-// READ-ONLY: lists processes via `tasklist` and checks for openvpn-gui.exe. Safe to call in
-// tests (no process is started). Resolves false on any error.
-function isOpenVpnGuiRunning(execFileImpl = execFile) {
+// isOpenVpnGuiRunning(options) -> Promise<boolean>
+// READ-ONLY "is the VPN client already running?" check, so we don't pop a second window.
+//   win32 : `tasklist` filtered to the client image (default openvpn-gui.exe; or the basename
+//           of options.clientPath when the user configured a different exe).
+//   posix : SKIP — resolve false. macOS `open -a <App>` is idempotent (re-running just focuses
+//           the app) and Linux clients vary too much to detect reliably, so "not running" is
+//           the safe answer (worst case we re-issue an idempotent launch). Mockable via
+//           options.platform / options.execFileImpl all the same.
+// Safe to call in tests (no process is started). Resolves false on any error.
+function clientImageName(options = {}) {
+  const fromPath = options.clientPath ? path.basename(String(options.clientPath)) : '';
+  return fromPath || OPENVPN_GUI_IMAGE;
+}
+
+function isOpenVpnGuiRunning(options = {}) {
+  const platformName = optionPlatform(options);
+  const execFileImpl = options.execFileImpl || execFile;
+  const image = clientImageName(options);
+
   return new Promise((resolve) => {
-    if (!isWin) {
+    if (platformName !== 'win32') {
       resolve(false);
       return;
     }
@@ -185,14 +264,14 @@ function isOpenVpnGuiRunning(execFileImpl = execFile) {
       // tasklist prints "INFO: No tasks ..." and exits 0, so we just test for the image name.
       execFileImpl(
         'tasklist',
-        ['/FI', `IMAGENAME eq ${OPENVPN_GUI_IMAGE}`, '/NH'],
+        ['/FI', `IMAGENAME eq ${image}`, '/NH'],
         { windowsHide: true, timeout: 8000 },
         (err, stdout) => {
           if (err) {
             resolve(false);
             return;
           }
-          resolve(new RegExp(OPENVPN_GUI_IMAGE, 'i').test(String(stdout || '')));
+          resolve(new RegExp(image.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(String(stdout || '')));
         }
       );
     } catch (_err) {
@@ -201,36 +280,91 @@ function isOpenVpnGuiRunning(execFileImpl = execFile) {
   });
 }
 
-// launchOpenVpnGui(exePath, spawnImpl) -> Promise<{ ok, launched, message, exePath }>
-// Spawns openvpn-gui.exe DETACHED (so it outlives the launcher) and unref's it. Only call
-// when the VPN is down AND the GUI is not already running. `exePath` defaults to CONTEXT §9
-// but is overridable. `spawnImpl` is a TEST-ONLY hook so tests can verify the path/args
-// WITHOUT actually popping the GUI window. Returns a serializable object; never throws.
+// launchVpnClient(config, options) -> Promise<{ ok, launched, message, command, args, ... }>
+// Spawns the VPN client DETACHED (so it outlives the launcher) and unref's it. Only call when
+// the VPN is down AND the client is not already running. The client is per-OS + CONFIGURABLE:
 //
-// Note: openvpn-gui.exe with no args just opens/brings up its tray UI (no auto-connect,
-// since the config dir is empty) — exactly the "open GUI so the user can log in" behaviour
-// CONTEXT §9 step 2 asks for.
-function validateOpenVpnGuiPath(target) {
+//   config.clientPath : explicit launcher command/executable (user-configured). For back-compat
+//                       config.exePath is accepted as an alias (old Windows-only field).
+//   config.clientArgs : optional args array passed to the client.
+//
+//   win32  default: openvpn-gui.exe (CONTEXT §9) — opens its tray UI so the user can log in.
+//   darwin default: `open -a Tunnelblick` (or the user's clientPath).
+//   linux  default: NONE — too varied (nmcli / openvpn3 / openvpn). With no clientPath we DON'T
+//                   guess: return { ok:false, reason:'no-client-configured' } so the UI can ask
+//                   the user to configure one.
+//
+// `options.platform` forces the OS branch and `options.spawnImpl` is a TEST hook so tests verify
+// the assembled command/args WITHOUT popping a window. Returns a serializable object; never
+// throws.
+
+// Validate ONLY absolute executable paths (the Windows default + any absolute user clientPath).
+// Bare PATH commands (open / xdg-open / nmcli / openvpn3) are left to spawn's error event, since
+// statSync can't see them. Returns { ok } or { ok:false, message }.
+function validateClientPath(command) {
+  if (!path.isAbsolute(command)) return { ok: true };
   try {
-    const stat = fs.statSync(target);
+    const stat = fs.statSync(command);
     if (!stat.isFile()) {
-      return { ok: false, message: `OpenVPN GUI path is not a file: ${target}` };
+      return { ok: false, message: `VPN client path is not a file: ${command}` };
     }
   } catch (err) {
     const reason = err && err.code === 'ENOENT' ? 'not found' : 'not accessible';
-    return { ok: false, message: `OpenVPN GUI executable ${reason}: ${target}` };
+    return { ok: false, message: `VPN client executable ${reason}: ${command}` };
   }
   return { ok: true };
 }
 
-function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
-  const target = exePath || DEFAULT_OPENVPN_GUI;
-  const pathStatus = validateOpenVpnGuiPath(target);
+// Resolve { command, args } (or { reason } when launch is not possible) for the given OS.
+function resolveClientPlan(platformName, config = {}) {
+  const clientPath = nonEmptyString(config.clientPath) || nonEmptyString(config.exePath) || '';
+  const clientArgs = Array.isArray(config.clientArgs) ? config.clientArgs.map(String) : null;
+
+  if (platformName === 'win32') {
+    return { command: clientPath || DEFAULT_OPENVPN_GUI, args: clientArgs || [] };
+  }
+
+  if (platformName === 'darwin') {
+    if (clientPath) return { command: clientPath, args: clientArgs || [] };
+    return { command: 'open', args: clientArgs && clientArgs.length ? clientArgs : ['-a', DEFAULT_MAC_VPN_APP] };
+  }
+
+  // linux / other POSIX: no universal client — require explicit configuration.
+  if (clientPath) return { command: clientPath, args: clientArgs || [] };
+  return {
+    reason: 'no-client-configured',
+    message:
+      'Hãy cấu hình lệnh VPN client (vd nmcli/openvpn3) trong VPN settings (clientPath/clientArgs).',
+  };
+}
+
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function launchVpnClient(config = {}, options = {}) {
+  const platformName = optionPlatform(options);
+  const spawnImpl = options.spawnImpl || spawn;
+  const plan = resolveClientPlan(platformName, config);
+
+  if (plan.reason) {
+    return Promise.resolve({
+      ok: false,
+      launched: false,
+      reason: plan.reason,
+      command: null,
+      message: plan.message,
+    });
+  }
+
+  const pathStatus = validateClientPath(plan.command);
   if (!pathStatus.ok) {
     return Promise.resolve({
       ok: false,
       launched: false,
-      exePath: target,
+      reason: 'client-path-invalid',
+      command: plan.command,
+      exePath: plan.command, // back-compat field name
       message: pathStatus.message,
     });
   }
@@ -245,7 +379,7 @@ function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
 
     let child;
     try {
-      child = spawnImpl(target, [], {
+      child = spawnImpl(plan.command, plan.args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: false, // it's a GUI app; let it show its window/tray.
@@ -254,7 +388,9 @@ function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
       settle({
         ok: false,
         launched: false,
-        exePath: target,
+        reason: 'spawn-error',
+        command: plan.command,
+        exePath: plan.command,
         message: (err && err.message) || String(err),
       });
       return;
@@ -269,9 +405,11 @@ function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
       settle({
         ok: true,
         launched: true,
-        exePath: target,
+        command: plan.command,
+        args: plan.args,
+        exePath: plan.command, // back-compat field name
         pid: child ? child.pid : null,
-        message: `Launched OpenVPN GUI (${target}).`,
+        message: `Launched VPN client (${plan.command}).`,
       });
     };
 
@@ -279,7 +417,9 @@ function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
       settle({
         ok: false,
         launched: false,
-        exePath: target,
+        reason: 'spawn-error',
+        command: plan.command,
+        exePath: plan.command,
         message: (err && err.message) || String(err),
       });
     };
@@ -293,6 +433,14 @@ function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
     // Compatibility path for simple test doubles that mimic only pid/unref.
     success();
   });
+}
+
+// launchOpenVpnGui(exePath, spawnImpl) -> Promise<...>
+// BACK-COMPAT alias (TD1 callers / ipc.js): launch the Windows-default OpenVPN GUI (or the
+// given exePath). Delegates to the cross-platform launchVpnClient. Kept so existing callers and
+// tests don't break.
+function launchOpenVpnGui(exePath = DEFAULT_OPENVPN_GUI, spawnImpl = spawn) {
+  return launchVpnClient({ clientPath: exePath }, { spawnImpl });
 }
 
 // waitForConnection(config, opts) -> { promise, cancel }
@@ -428,6 +576,7 @@ module.exports = {
   detectAdapter,
   isVpnConnected,
   isOpenVpnGuiRunning,
+  launchVpnClient,
   launchOpenVpnGui,
   waitForConnection,
 };

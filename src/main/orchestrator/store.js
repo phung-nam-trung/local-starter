@@ -35,7 +35,9 @@ const DEFAULT_CONFIG = {
   env: 'prod',
   portOverrideByRepo: {},
   workspaceRoots: { spLocalWorkspace: '', newFrontend: '' },
-  vpn: { probeHost: '', probePort: null, exePath: '' },
+  // exePath kept for back-compat (old Windows-only field); clientPath/clientArgs are the
+  // cross-platform VPN client config read by vpn.js launchVpnClient (TK6).
+  vpn: { probeHost: '', probePort: null, exePath: '', clientPath: '', clientArgs: [] },
 };
 
 function isPlainObject(value) {

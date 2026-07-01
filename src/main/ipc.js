@@ -321,8 +321,11 @@ function setupIpc() {
     })
   );
 
-  // vpn:connect — if already connected, do nothing. Otherwise: launch openvpn-gui.exe (only
-  // if it isn't already running) + fire the native Notification + start polling. The invoke
+  // vpn:connect — if already connected, do nothing. Otherwise: launch the per-OS VPN client
+  // (only if it isn't already running) + fire the native Notification + start polling. The
+  // client is CONFIGURABLE (clientPath/clientArgs, exePath back-compat) — nothing hardcoded;
+  // vpn.js picks the OS default when unset (win openvpn-gui.exe, mac `open -a Tunnelblick`,
+  // linux requires clientPath). We forward only user config, never test-only hooks. The invoke
   // result reports what we did ({ ok, alreadyConnected, launch?, notified, polling }); the
   // poll's outcome arrives later via the final vpn:tick + the caller observing connected.
   ipcMain.handle('vpn:connect', async (event, config = {}) => {
@@ -331,19 +334,27 @@ function setupIpc() {
       probePort: config.probePort,
       timeoutMs: config.timeoutMs,
     };
+    const clientConfig = {
+      clientPath: config.clientPath,
+      clientArgs: config.clientArgs,
+      exePath: config.exePath, // back-compat alias
+    };
 
     const initial = await vpn.isVpnConnected(probeConfig);
     if (initial.connected) {
       return { ok: true, alreadyConnected: true, method: initial.method, detail: initial.detail };
     }
 
-    // Launch the GUI only when it isn't already running (don't pop a second window).
+    // Launch the client only when it isn't already running (don't pop a second window). The
+    // running-check keys off the same client basename so a custom clientPath is respected.
     let launch = null;
-    const running = await vpn.isOpenVpnGuiRunning();
+    const running = await vpn.isOpenVpnGuiRunning({
+      clientPath: clientConfig.clientPath || clientConfig.exePath,
+    });
     if (!running) {
-      launch = await vpn.launchOpenVpnGui(config.exePath);
+      launch = await vpn.launchVpnClient(clientConfig);
     } else {
-      launch = { ok: true, launched: false, message: 'OpenVPN GUI is already running.' };
+      launch = { ok: true, launched: false, message: 'VPN client is already running.' };
     }
     if (launch && launch.ok === false) {
       return {
