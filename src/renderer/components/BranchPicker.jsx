@@ -1,31 +1,32 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
-// F2/F3 / TB2 — branch picker for ONE repo.
+// F2/F3 / TB2 / TN2 — branch picker for ONE repo.
 // Shows current branch + clean/dirty; Fetch; a branch dropdown (local + remote) with the
-// repo's defaultBranch PRESELECTED when present (fallback: current branch, else first in
-// list — never fails just because the default is missing); Checkout + Pull.
+// repo's CURRENT branch PRESELECTED when present (fallback: repo.defaultBranch, else first
+// in list — never fails just because the current/default is missing); Checkout + Pull.
 //
 // SAFETY: when the working tree is dirty we DISABLE checkout/pull and show a warning.
 // The main process also refuses dirty mutations (reason:'dirty') — this UI guard is the
 // first line; the orchestrator is the backstop. We never stash/overwrite for the user.
 
-// Pick the branch to preselect from the loaded list (matches the orchestrator's intent):
-//   1) repo.defaultBranch if a LOCAL branch by that name exists
-//   2) else a remote whose bare short == defaultBranch (e.g. only origin/master exists)
-//   3) else the current branch
+// Pick the branch to preselect from the loaded list (TN2: current-first so the dropdown
+// reflects the branch the repo is actually on, not the static defaultBranch):
+//   1) the CURRENT branch if a LOCAL branch by that name exists
+//   2) else repo.defaultBranch as a LOCAL branch by that name
+//   3) else a remote whose bare short == defaultBranch (e.g. only origin/master exists)
 //   4) else the first entry
 // Returns the branch *value* we use for <select> (full name, e.g. "master" or "origin/x").
 function pickDefault(branches, defaultBranch, current) {
   if (!branches.length) return '';
+  if (current) {
+    const curMatch = branches.find((b) => !b.isRemote && b.name === current);
+    if (curMatch) return curMatch.name;
+  }
   if (defaultBranch) {
     const localMatch = branches.find((b) => !b.isRemote && b.name === defaultBranch);
     if (localMatch) return localMatch.name;
     const remoteMatch = branches.find((b) => b.isRemote && b.short === defaultBranch);
     if (remoteMatch) return remoteMatch.name;
-  }
-  if (current) {
-    const curMatch = branches.find((b) => !b.isRemote && b.name === current);
-    if (curMatch) return curMatch.name;
   }
   return branches[0].name;
 }
@@ -60,7 +61,7 @@ function buildDestructiveConfirm(repo, actionName, preview, includeClean, monore
   return lines.join('\n');
 }
 
-export default function BranchPicker({ repo }) {
+export default function BranchPicker({ repo, onBranchChanged }) {
   const [branches, setBranches] = useState([]);
   const [current, setCurrent] = useState(null);
   const [clean, setClean] = useState(null); // null = unknown/loading
@@ -149,6 +150,7 @@ export default function BranchPicker({ repo }) {
       const res = await window.launcher.git.checkout(repo.id, chosen);
       setNotice(res.message || (res.ok ? 'Checked out.' : 'Checkout refused.'));
       await refresh(true);
+      onBranchChanged?.(); // let RepoList refresh the left-column branch labels
     } catch (err) {
       setError(String(err));
     } finally {
@@ -165,6 +167,7 @@ export default function BranchPicker({ repo }) {
       const res = await window.launcher.git.pull(repo.id);
       setNotice(res.message || (res.ok ? 'Pulled.' : 'Pull refused.'));
       await refresh(true);
+      onBranchChanged?.(); // pull can fast-forward/update the current branch
     } catch (err) {
       setError(String(err));
     } finally {
@@ -206,6 +209,7 @@ export default function BranchPicker({ repo }) {
       const after = res.statusAfter && res.statusAfter.trim() ? `\n\nStatus after:\n${res.statusAfter}` : '';
       setNotice((res.message || (res.ok ? 'Tracked changes reset.' : 'Reset refused.')) + after);
       await refresh(true);
+      onBranchChanged?.(); // working tree changed; keep RepoList branch labels in sync
     } catch (err) {
       setError(String(err));
     } finally {
@@ -247,6 +251,7 @@ export default function BranchPicker({ repo }) {
       const after = res.statusAfter && res.statusAfter.trim() ? `\n\nStatus after:\n${res.statusAfter}` : '';
       setNotice((res.message || (res.ok ? 'Local changes discarded.' : 'Discard refused.')) + after);
       await refresh(true);
+      onBranchChanged?.(); // working tree changed; keep RepoList branch labels in sync
     } catch (err) {
       setError(String(err));
     } finally {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import BranchPicker from './BranchPicker.jsx';
 import DepsPanel from './DepsPanel.jsx';
 import EnvSelector from './EnvSelector.jsx';
@@ -16,10 +16,32 @@ export default function RepoList() {
   const [repos, setRepos] = useState([]);
   const [selected, setSelected] = useState(() => new Set());
   const [activeId, setActiveId] = useState(null); // repo whose branches show in the picker
+  const [branchById, setBranchById] = useState({}); // repoId -> current git branch | null
   const [error, setError] = useState(null);
   // Gate the save-on-change effect until the initial load is done, so restoring the config
   // doesn't immediately write it back (no save/load render loop).
   const loadedRef = useRef(false);
+  // Latest repo list for callbacks (mirrors StatusTable: keeps refreshBranches stable).
+  const reposRef = useRef([]);
+
+  // Fetch every repo's CURRENT git branch (read-only) in parallel and cache it. Per-repo
+  // failures resolve to null so one bad repo never blanks the column. Called on mount and
+  // on demand after a BranchPicker mutation — NOT polled (git.currentBranch spawns per repo).
+  const refreshBranches = useCallback(async (list) => {
+    const target = list || reposRef.current;
+    if (!target.length) return;
+    const entries = await Promise.all(
+      target.map(async (repo) => {
+        try {
+          const branch = await window.launcher.git.currentBranch(repo.id);
+          return [repo.id, branch];
+        } catch (_err) {
+          return [repo.id, null];
+        }
+      })
+    );
+    setBranchById(Object.fromEntries(entries));
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -28,6 +50,8 @@ export default function RepoList() {
       .then(([list, config]) => {
         if (!active) return;
         setRepos(list);
+        reposRef.current = list;
+        refreshBranches(list);
         const valid = new Set(list.map((r) => r.id));
         const savedIds = (config.selectedRepoIds || []).filter((id) => valid.has(id));
         setSelected(new Set(savedIds));
@@ -42,7 +66,7 @@ export default function RepoList() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshBranches]);
 
   // Persist selection slices on change (after the initial load). Merge over the current
   // on-disk config so we never clobber env/vpn written by the other panels.
@@ -170,7 +194,7 @@ export default function RepoList() {
                       <strong>{repo.name}</strong>
                       <span style={{ color: '#666' }}>
                         {' '}
-                        · branch {repo.defaultBranch} · port{' '}
+                        · branch {branchById[repo.id] ?? '…'} · port{' '}
                         {repo.port == null ? 'n/a (build-only)' : repo.port}
                       </span>
                       <br />
@@ -198,7 +222,7 @@ export default function RepoList() {
       >
         <VpnStatus />
         <EnvSelector />
-        <BranchPicker repo={activeRepo} />
+        <BranchPicker repo={activeRepo} onBranchChanged={refreshBranches} />
         <DepsPanel repo={activeRepo} />
         <RunControls repo={activeRepo} />
         {/* TG1 — indexer-only edits + restart; the panel self-hides for other repos. */}
