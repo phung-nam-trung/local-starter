@@ -10,6 +10,24 @@ const fs = require('node:fs/promises');
 const fsConstants = require('node:fs').constants;
 const path = require('node:path');
 const { getRepo } = require('./repos');
+const git = require('./git');
+
+// TO1 — patterns git should ignore LOCALLY (.git/info/exclude) so the "Discard all"
+// button (git clean -fd) never deletes the user's untracked prod/test env files.
+const PROTECTED_ENV_EXCLUDES = ['.env-prod', '.env-test'];
+
+// Best-effort: keep selfpointrest's .env-prod/.env-test protected via git local excludes.
+// Wrapped so a failure here NEVER breaks apply/status — protection is a safety net, not a
+// hard dependency. When a test points env at a fixture dir (options.selfpointrestDir), we
+// target that same dir directly so the fixture is self-contained.
+async function ensureProtectedEnvExcludes(options = {}) {
+  try {
+    const cwd = options.selfpointrestDir || undefined;
+    await git.ensureLocalExcludes('selfpointrest', PROTECTED_ENV_EXCLUDES, cwd ? { cwd } : {});
+  } catch (_err) {
+    // Never surface — the .env copy already succeeded / status is still valid.
+  }
+}
 
 const ENV_FILES = {
   prod: '.env-prod',
@@ -162,6 +180,8 @@ async function hasRequiredClientsDir(dir) {
 async function getSelfpointrestEnvStatus(options = {}) {
   try {
     const dir = resolveSelfpointrestDir(options);
+    // TO1 — protect prod/test env files as soon as the panel reads status (no button needed).
+    await ensureProtectedEnvExcludes(options);
     const files = {};
     for (const [envName, fileName] of Object.entries(ENV_FILES)) {
       const stat = await statOrNull(path.join(dir, fileName));
@@ -199,6 +219,8 @@ async function applySelfpointrestEnv(envName, options = {}) {
     const backup = await backupActiveEnv(dir);
     await fs.copyFile(sourcePath, activePath);
     const clientsDir = await ensureClientsDir(activePath);
+    // TO1 — protect the untracked prod/test env files from "Discard all" (git clean -fd).
+    await ensureProtectedEnvExcludes(options);
 
     return {
       ok: true,

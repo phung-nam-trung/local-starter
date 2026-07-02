@@ -11,6 +11,8 @@
 // so paths with spaces and odd branch names never hit shell quoting issues on Windows.
 
 const { execFile } = require('node:child_process');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { getRepo } = require('./repos');
 
 // Resolve a repoId to its absolute working dir, or throw a clear error.
@@ -260,6 +262,93 @@ async function discardAllLocalChanges(repoId, confirmation = {}) {
   }
 }
 
+// TO1 — protect untracked files (e.g. selfpointrest .env-prod/.env-test) from the
+// "Discard all" button (git clean -fd) by adding patterns to LOCAL, uncommitted ignore
+// rules in .git/info/exclude. Unlike .gitignore this is not a tracked file, so
+// `git reset --hard HEAD` never reverts it. `git clean -fd` (no -x, as discardAllLocalChanges
+// uses) then skips the ignored files.
+//
+// Idempotent + backed up (CONTEXT §10): the pre-launcher exclude is copied to
+// info/exclude.launcher-bak once (before the first edit); only patterns not already present
+// (line-for-line, trimmed) are appended, under a stable marker — never duplicated.
+//
+// Returns a SERIALIZABLE result { ok, excludePath, added:[], already:[] } and never throws
+// (errors -> { ok:false, message }). `options.cwd` is a TEST-ONLY hook to point at a fixture
+// repo; production callers pass only repoId (resolved via the registry like every other op).
+const LOCAL_EXCLUDE_MARKER = '# launcher: local env excludes (managed)';
+
+async function ensureLocalExcludes(repoId, patterns, options = {}) {
+  // Normalize/validate patterns up front — ignore blanks so we never write empty lines.
+  const wanted = Array.isArray(patterns)
+    ? patterns.map((p) => (typeof p === 'string' ? p.trim() : '')).filter(Boolean)
+    : [];
+  if (!wanted.length) {
+    return { ok: false, message: 'ensureLocalExcludes: patterns must be a non-empty string array.' };
+  }
+
+  let cwd;
+  try {
+    cwd = typeof options.cwd === 'string' && options.cwd ? options.cwd : repoCwd(repoId);
+  } catch (err) {
+    return { ok: false, message: (err && err.message) || String(err) };
+  }
+
+  try {
+    // `git rev-parse --git-path info/exclude` is robust for plain repos, worktrees and
+    // submodules; it may print a path relative to cwd, so resolve against cwd.
+    const rel = (await git(cwd, ['rev-parse', '--git-path', 'info/exclude'])).trim();
+    const excludePath = path.resolve(cwd, rel);
+
+    // Ensure the info/ dir + exclude file exist (a fresh repo may have neither).
+    await fs.mkdir(path.dirname(excludePath), { recursive: true });
+    let current = '';
+    try {
+      current = await fs.readFile(excludePath, 'utf8');
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') throw err;
+    }
+
+    // Split into trimmed lines to decide what's already excluded (idempotent).
+    const existing = new Set(
+      current
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+    );
+    const added = [];
+    const already = [];
+    for (const pattern of wanted) {
+      if (existing.has(pattern)) already.push(pattern);
+      else added.push(pattern);
+    }
+
+    if (added.length) {
+      // Backup the pre-edit exclude ONCE, before our first modification (CONTEXT §10).
+      const backupPath = `${excludePath}.launcher-bak`;
+      let hasBackup = true;
+      try {
+        await fs.access(backupPath);
+      } catch (_err) {
+        hasBackup = false;
+      }
+      if (!hasBackup) {
+        await fs.writeFile(backupPath, current, 'utf8');
+      }
+
+      // Append missing patterns under the marker, preserving existing content verbatim.
+      const eol = current.includes('\r\n') ? '\r\n' : '\n';
+      const needsLeadingEol = current.length > 0 && !current.endsWith('\n');
+      const block = [LOCAL_EXCLUDE_MARKER, ...added].join(eol) + eol;
+      const next = `${current}${needsLeadingEol ? eol : ''}${block}`;
+      await fs.writeFile(excludePath, next, 'utf8');
+    }
+
+    return { ok: true, excludePath, added, already };
+  } catch (err) {
+    return { ok: false, message: (err && err.message) || String(err) };
+  }
+}
+
 // fetch(repoId) -> { ok, message } | { ok:false, reason:'error', message }
 // `git fetch --all --prune`. Read-only w.r.t. the working tree (updates remote-tracking
 // refs only), so it is always safe to run — no clean check needed.
@@ -390,6 +479,7 @@ module.exports = {
   previewLocalChanges,
   resetTrackedChanges,
   discardAllLocalChanges,
+  ensureLocalExcludes,
   fetch,
   checkout,
   pull,
