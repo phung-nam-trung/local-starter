@@ -160,18 +160,16 @@ Repo này **không chạy "ngay"** mà thường cần chỉnh test trước:
 
 ## 9. VPN (Azure VPN; client theo OS)
 
-- Backend (selfpointrest, loyalty, indexer, token-service) cần VPN để truy cập DB/ES nội bộ. UI thuần (build/serve) thì không.
+- Backend (selfpointrest, loyalty, indexer, token-service) cần VPN để truy cập dịch vụ nội bộ. UI thuần (build/serve) thì không.
 - Launcher **không** tự lấy/import file `.ovpn` hoặc profile VPN. User phải chuẩn bị client/profile riêng theo OS.
 - Windows default: OpenVPN GUI `C:\Program Files\OpenVPN\bin\openvpn-gui.exe`; thư mục config `C:\Program Files\OpenVPN\config\` có thể rỗng lúc đầu, cần import `.ovpn` thủ công từ team.
 - macOS default: `open -a Tunnelblick` (có thể override bằng config).
 - Linux: không có default an toàn; user cấu hình `vpn.clientPath`/`vpn.clientArgs` (vd `nmcli`, `openvpn3`, hoặc client nội bộ). `vpn.exePath` cũ vẫn là alias back-compat cho `clientPath`.
 
 **Flow VPN mong muốn của launcher:**
-1. **Detect** đã kết nối VPN chưa. Cách khả dĩ (Leader chọn & cấu hình được):
-   - TCP-connect tới một **host:port nội bộ** (vd host DB lấy từ `.env`, hoặc một internal URL) — đây là cách đáng tin nhất và là detection chính. Host probe này nên là **config** do user nhập, không hardcode.
-   - Nếu không có probe host → fallback kiểm adapter theo OS: Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`.
+1. **Detect** đã kết nối VPN chưa bằng adapter VPN đang `Up` theo OS: Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`. Launcher không mở kết nối thử tới host nội bộ để dò trạng thái VPN.
 2. Nếu **chưa** kết nối → chạy VPN client theo OS/config (`launchVpnClient` với `clientPath`/`clientArgs`) và **hiển thị thông báo "Hãy đăng nhập VPN"**. Trên Linux nếu chưa cấu hình client, báo rõ để user nhập `clientPath`/`clientArgs`.
-3. **Poll** (vd mỗi 2–3s, có timeout) tới khi probe thành công → mới tiếp tục start backend.
+3. **Poll adapter** (vd mỗi 2–3s, có timeout) tới khi adapter VPN `Up` → mới tiếp tục start backend.
 4. Cho phép user **bỏ qua** VPN nếu chỉ chạy UI (build/serve không cần DB).
 
 > Launcher chỉ detect + mở/focus client + chờ; không quản lý secret/profile VPN.
@@ -184,7 +182,7 @@ Repo này **không chạy "ngay"** mà thường cần chỉnh test trước:
 2. **Shell & package-manager theo OS.** Môi trường hiện đã verify chính trên Windows 11, nhưng code phải giữ đúng cho Windows/macOS/Linux. Đường dẫn có space phải được truyền an toàn (ưu tiên `cwd`/args thay vì ghép chuỗi). `npm.cmd`/`pnpm.cmd` chỉ dùng trên Windows (`platform.pmCommand`); macOS/Linux dùng `npm`/`pnpm`. pnpm nên bật qua `corepack enable`.
 3. **Process management cross-platform.** Các lệnh start là **long-running dev server**. Launcher phải spawn với `cwd` đúng repo, capture stdout/stderr để stream log, lưu PID, hỗ trợ **stop từng repo**, **stop all**, **restart** (đặc biệt indexer §7), và xử lý process tự chết (crash) → cập nhật trạng thái. Stop phải kill **cả cây process**: Windows dùng `taskkill /PID <pid> /T /F`; POSIX (macOS/Linux) spawn long-running process với `detached:true`, rồi kill process group bằng `SIGTERM` → timeout → `SIGKILL`.
 4. **Mở file/editor theo OS.** Không hardcode `cmd /c start` ngoài Windows. Dùng helper tương đương `platform.openPath`: Windows `cmd /c start "" <path>`, macOS `open <path>`, Linux `xdg-open <path>`.
-5. **VPN client theo OS.** TCP probe `host:port` là detection chính khi user cấu hình. Adapter fallback theo OS: Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`; lỗi phải trả `connected:false`, không throw. Launch VPN qua `vpn.clientPath`/`vpn.clientArgs` (giữ `exePath` cũ là alias): Windows default OpenVPN GUI, macOS default `open -a Tunnelblick`, Linux bắt buộc user cấu hình client (`nmcli`/`openvpn3`/client khác).
+5. **VPN client theo OS.** Detect VPN chỉ dựa vào adapter VPN `Up` theo OS: Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`; lỗi phải trả `connected:false`, không throw. Launch VPN qua `vpn.clientPath`/`vpn.clientArgs` (giữ `exePath` cũ là alias): Windows default OpenVPN GUI, macOS default `open -a Tunnelblick`, Linux bắt buộc user cấu hình client (`nmcli`/`openvpn3`/client khác).
 6. **Cài dependencies "còn thiếu".** Mặc định chỉ `install` khi cần (vd `node_modules` chưa có, hoặc lockfile mới hơn `node_modules`). Cho phép user ép cài lại. new-frontend chạy **Husky** khi `pnpm install` → coi chừng hook lỗi làm install fail (cần xử lý/giải thích).
 7. **Node version.** sp-local-workspace cần Node 20.18.0; new-frontend cần Node 20+. Nếu user dùng nvm/nvm-windows/asdf, launcher nên kiểm tra version và cảnh báo nếu lệch.
 8. **Bí mật.** KHÔNG in/log nội dung `.env*`. KHÔNG commit secret. KHÔNG hardcode credential.
@@ -201,14 +199,14 @@ Launcher (bất kể stack nào) phải làm được:
 - [ ] **F2 — Chọn branch:** với mỗi repo đã chọn, hiển thị branch picker, preselect mặc định (§4), cho đổi branch.
 - [ ] **F3 — Fetch & Pull:** `git fetch --all --prune` + checkout + pull an toàn (§4), báo lỗi rõ ràng nếu working tree bẩn; cho phép user xác nhận `reset --hard HEAD` hoặc discard local changes để unblock checkout/pull.
 - [ ] **F4 — Install deps:** cài **khi thiếu** (npm cho sp-local-workspace, pnpm ở root cho new-frontend), có nút ép cài lại; xử lý postinstall (gulp buildAll / bower) và Husky (§10).
-- [ ] **F5 — VPN:** detect → nếu chưa kết nối thì mở VPN client theo OS/config + thông báo + poll tới khi kết nối (§9); cho bỏ qua nếu chỉ chạy UI.
+- [ ] **F5 — VPN:** detect adapter VPN `Up` theo OS → nếu chưa kết nối thì mở VPN client theo OS/config + thông báo để user tự authen + poll adapter tới khi kết nối (§9); cho bỏ qua nếu chỉ chạy UI.
 - [ ] **F6 — Env selfpointrest:** chọn prod/test (mặc định prod), copy → `.env` có backup, đảm bảo `clients_dir` (§5).
 - [ ] **F7 — Build & Run đúng thứ tự:** theo §12; build UI trước khi selfpointrest serve; override port khi trùng (§8).
 - [ ] **F8 — Indexer:** hỗ trợ sửa `test/products.js` & `test/specials.js` (mở file hoặc patch preset) + **restart** (§7).
 - [ ] **F9 — Stop all:** dừng toàn bộ process đã start (kill cả cây process), giải phóng port.
 - [ ] **F10 — Restart:** restart từng repo (đặc biệt indexer).
 - [ ] **F11 — Log & trạng thái:** stream log mỗi repo; hiển thị trạng thái (stopped / installing / building / running / crashed) + port + branch hiện tại.
-- [ ] **F12 — Lưu cấu hình:** nhớ lựa chọn lần trước (workspace roots, repo, branch, env, port override, VPN probe host, VPN client path/args) để lần sau nhanh hơn.
+- [ ] **F12 — Lưu cấu hình:** nhớ lựa chọn lần trước (workspace roots, repo, branch, env, port override, VPN client path/args) để lần sau nhanh hơn.
 
 ---
 

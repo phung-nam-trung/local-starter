@@ -130,6 +130,18 @@ function cancelVpnPoll() {
   vpnPoll = null;
 }
 
+function pickVpnAdapterConfig(config = {}) {
+  return typeof config.platform === 'string' ? { platform: config.platform } : {};
+}
+
+function pickVpnClientConfig(config = {}) {
+  return {
+    clientPath: config.clientPath,
+    clientArgs: config.clientArgs,
+    exePath: config.exePath, // back-compat alias
+  };
+}
+
 // Registers all IPC handlers. Called once from main.js after app is ready.
 // Keep channels narrow and return metadata only (the registry holds no secrets).
 function setupIpc() {
@@ -308,17 +320,13 @@ function setupIpc() {
   ipcMain.handle('indexer:getRestOnly', () => indexer.getRestOnlyState());
   ipcMain.handle('indexer:setRestOnly', (_event, enabled) => indexer.setRestOnly(Boolean(enabled)));
 
-  // VPN handlers (F5 / TD1). All config (probeHost/probePort/exePath) comes from the
-  // renderer — nothing is hardcoded. The native "Hãy đăng nhập VPN" Notification is fired
+  // VPN handlers (F5 / TD1). Detection is adapter-only; launch uses the user-configured
+  // client command when provided. The native "Hãy đăng nhập VPN" Notification is fired
   // HERE (needs electron), not in vpn.js. Poll ticks stream back via vpn:tick.
   //
   // vpn:check — one-shot detection. Returns { connected, method, detail? }.
   ipcMain.handle('vpn:check', (_event, config = {}) =>
-    vpn.isVpnConnected({
-      probeHost: config.probeHost,
-      probePort: config.probePort,
-      timeoutMs: config.timeoutMs,
-    })
+    vpn.isVpnConnected(pickVpnAdapterConfig(config))
   );
 
   // vpn:connect — if already connected, do nothing. Otherwise: launch the per-OS VPN client
@@ -329,18 +337,10 @@ function setupIpc() {
   // result reports what we did ({ ok, alreadyConnected, launch?, notified, polling }); the
   // poll's outcome arrives later via the final vpn:tick + the caller observing connected.
   ipcMain.handle('vpn:connect', async (event, config = {}) => {
-    const probeConfig = {
-      probeHost: config.probeHost,
-      probePort: config.probePort,
-      timeoutMs: config.timeoutMs,
-    };
-    const clientConfig = {
-      clientPath: config.clientPath,
-      clientArgs: config.clientArgs,
-      exePath: config.exePath, // back-compat alias
-    };
+    const adapterConfig = pickVpnAdapterConfig(config);
+    const clientConfig = pickVpnClientConfig(config);
 
-    const initial = await vpn.isVpnConnected(probeConfig);
+    const initial = await vpn.isVpnConnected(adapterConfig);
     if (initial.connected) {
       return { ok: true, alreadyConnected: true, method: initial.method, detail: initial.detail };
     }
@@ -349,6 +349,7 @@ function setupIpc() {
     // running-check keys off the same client basename so a custom clientPath is respected.
     let launch = null;
     const running = await vpn.isOpenVpnGuiRunning({
+      platform: adapterConfig.platform,
       clientPath: clientConfig.clientPath || clientConfig.exePath,
     });
     if (!running) {
@@ -385,9 +386,7 @@ function setupIpc() {
     // Replace any previous poll, then start a fresh one. Ticks are streamed to the renderer
     // that initiated the connect; the final tick reflects connected/timeout/cancel.
     cancelVpnPoll();
-    vpnPoll = vpn.waitForConnection(probeConfig, {
-      intervalMs: config.intervalMs, // per-poll cadence (vpn.js default 2500ms)
-      timeoutMs: config.pollTimeoutMs, // total poll budget (vpn.js default 120000ms)
+    vpnPoll = vpn.waitForConnection(adapterConfig, {
       onTick: (tick) => event.sender.send('vpn:tick', tick),
     });
     vpnPoll.promise.then((outcome) => {

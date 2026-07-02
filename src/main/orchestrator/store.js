@@ -4,9 +4,9 @@
 // tested from the CLI). The caller (ipc.js) decides WHERE the file lives (userData path) and
 // passes the absolute path in; this module only reads/writes JSON.
 //
-// What we persist = the user's CHOICES only (which repos/branch/env/port overrides/VPN probe
-// host), never secrets or .env contents (CONTEXT §10). The VPN probe host is a connection
-// hint the user types — not a credential.
+// What we persist = the user's CHOICES only (which repos/branch/env/port overrides/workspace
+// roots/VPN client command), never secrets or .env contents (CONTEXT section 10). VPN
+// connection detection is adapter-based; no internal connectivity target is stored.
 //
 // load(filePath)  -> parsed config merged (shallow) over DEFAULT_CONFIG. Missing file or bad
 //                    JSON returns the defaults instead of throwing, so a corrupt/absent config
@@ -37,7 +37,7 @@ const DEFAULT_CONFIG = {
   workspaceRoots: { spLocalWorkspace: '', newFrontend: '' },
   // exePath kept for back-compat (old Windows-only field); clientPath/clientArgs are the
   // cross-platform VPN client config read by vpn.js launchVpnClient (TK6).
-  vpn: { probeHost: '', probePort: null, exePath: '', clientPath: '', clientArgs: [] },
+  vpn: { exePath: '', clientPath: '', clientArgs: [] },
 };
 
 function isPlainObject(value) {
@@ -179,9 +179,20 @@ function freshDefault() {
   };
 }
 
+function pickVpnConfig(value) {
+  const vpnConfig = { ...DEFAULT_CONFIG.vpn };
+  if (!isPlainObject(value)) return vpnConfig;
+
+  if (typeof value.exePath === 'string') vpnConfig.exePath = value.exePath;
+  if (typeof value.clientPath === 'string') vpnConfig.clientPath = value.clientPath;
+  if (Array.isArray(value.clientArgs)) vpnConfig.clientArgs = value.clientArgs;
+
+  return vpnConfig;
+}
+
 // Shallow merge of a loaded object over the defaults: top-level keys are taken from `loaded`
-// when present, and the `vpn` slice is merged one level deeper so an old config missing a new
-// vpn field (e.g. exePath) still resolves safely. Unknown extra keys in `loaded` are dropped.
+// when present, and the `vpn` slice keeps only current persisted fields so old probe config
+// can be read safely without surviving the merge. Unknown extra keys in `loaded` are dropped.
 function mergeConfig(loaded) {
   const base = freshDefault();
   if (!isPlainObject(loaded)) return base;
@@ -196,7 +207,7 @@ function mergeConfig(loaded) {
   if (isPlainObject(loaded.workspaceRoots)) {
     base.workspaceRoots = { ...base.workspaceRoots, ...loaded.workspaceRoots };
   }
-  if (isPlainObject(loaded.vpn)) base.vpn = { ...base.vpn, ...loaded.vpn };
+  if (isPlainObject(loaded.vpn)) base.vpn = pickVpnConfig(loaded.vpn);
 
   return base;
 }
@@ -224,7 +235,7 @@ function save(filePath, config) {
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
 
-    const json = `${JSON.stringify(config, null, 2)}\n`;
+    const json = `${JSON.stringify(mergeConfig(config), null, 2)}\n`;
     const tmpPath = `${filePath}.tmp-${process.pid}`;
     fs.writeFileSync(tmpPath, json, 'utf8');
     fs.renameSync(tmpPath, filePath);

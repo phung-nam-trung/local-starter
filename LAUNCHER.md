@@ -15,7 +15,7 @@ Launcher đã verify chính trên **Windows 11**. Code Phase K đã tách phần
 | **Node.js** | **20.x** | `sp-local-workspace` cần đúng **20.18.0**; `new-frontend` cần 20+. Dùng nvm/nvm-windows/asdf/Volta tùy OS, miễn `node --version` là 20.x trước khi mở app. |
 | **Git** | có trên PATH | Launcher gọi `git` CLI trực tiếp (fetch/checkout/pull/branch). |
 | **pnpm** | bật qua `corepack enable` | `new-frontend` (stor-web) dùng `pnpm`. Chạy `corepack enable` một lần để có `pnpm` trên PATH. |
-| **VPN client** | theo OS | Backend cần VPN để truy cập DB/ES nội bộ. Launcher chỉ detect / mở client / chờ kết nối; không import profile hoặc secret VPN. |
+| **VPN client** | theo OS | Backend cần VPN để truy cập dịch vụ nội bộ. Launcher chỉ detect / mở client / chờ kết nối; không import profile hoặc secret VPN. |
 
 VPN client khuyến nghị theo OS:
 
@@ -75,7 +75,7 @@ npm start
 4. Chọn repo muốn chạy. Click vào từng repo để mở panel chi tiết ở cột phải.
 5. Ở **Branch**, bấm **Fetch**, chọn branch cần dùng, rồi **Checkout/Pull**. Nếu app báo repo đang dirty, hãy commit/stash hoặc dùng hành động reset/discard có xác nhận trong BranchPicker.
 6. Ở **Deps**, bấm **Check deps**. Nếu thiếu hoặc stale, bấm **Install if needed**. Dùng **Force reinstall** khi muốn ép cài lại.
-7. Nếu chạy backend, vào **VPN**, nhập probe host/port nội bộ nếu có, cấu hình client path/args nếu OS cần, bấm **Check** hoặc **Connect**, rồi đăng nhập VPN trong client. Nếu chỉ chạy UI thuần, có thể bấm **Skip**.
+7. Nếu chạy backend, vào **VPN**, cấu hình client path/args nếu OS cần, bấm **Check** hoặc **Connect**, rồi đăng nhập VPN trong client. Launcher sẽ poll adapter VPN tới khi connected. Nếu chỉ chạy UI thuần, có thể bấm **Skip**.
 8. Nếu chạy `selfpointrest`, vào **Env - selfpointrest**, chọn `prod` hoặc `test`, rồi bấm **Apply env**.
 9. Vào **Run**, chọn tùy chọn build cần thiết rồi bấm **Build & Start**. Theo dõi log ngay trong app.
 10. Khi xong việc, dùng **Stop** cho từng repo hoặc **Stop all** để dừng toàn bộ process con.
@@ -132,14 +132,14 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 | **F2** | Chọn branch | BranchPicker (mỗi repo) | Picker hiển thị branch local + remote, **preselect** mặc định (`master` / `new-frontend-dev-prod`); nếu default không tồn tại → chọn từ list thật. |
 | **F3** | Fetch & Pull | BranchPicker | `git fetch --all --prune` → checkout → pull **an toàn** (chỉ pull khi working tree sạch; bẩn → cảnh báo, không overwrite). |
 | **F4** | Install deps | DepsPanel | Cài **khi thiếu/stale** (npm trong từng repo `sp`; thêm target ROOT `sp-local-workspace` cho UI builder; `pnpm install` ở **root** `new-frontend`); nút **force reinstall**; stream output; báo lỗi rõ nếu postinstall (gulp buildAll/bower) hoặc Husky fail. |
-| **F5** | VPN | VpnStatus | Detect VPN bằng probe TCP `host:port` nội bộ — **bạn tự nhập** host probe; nếu không có probe thì fallback adapter theo OS (Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`). Nếu down → mở VPN client theo OS/config (`clientPath`/`clientArgs`) + **native notification** "Hãy đăng nhập VPN" + poll tới khi up. Có nút **Skip** (chỉ chạy UI thì không cần VPN). |
+| **F5** | VPN | VpnStatus | Detect VPN bằng adapter `Up` theo OS (Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`). Nếu down → mở VPN client theo OS/config (`clientPath`/`clientArgs`) + **native notification** "Hãy đăng nhập VPN" để user tự authen + poll adapter tới khi up. Có nút **Skip** (chỉ chạy UI thì không cần VPN). |
 | **F6** | Env selfpointrest | EnvSelector | Chọn **prod / test** (mặc định **prod**) → backup `.env` hiện tại (`.env.bak-<timestamp>`) → copy `.env-prod`/`.env-test` → `.env`; đảm bảo `clients_dir="../../public"`. **Không in nội dung `.env` ra log.** |
 | **F7** | Build & Run | RunControls | Build/run đúng thứ tự. selfpointrest: install server→`buildAll` tại `servers/selfpointrest`; nếu build UI Back Office/Kikar/Prutah thì kiểm tra ROOT + public deps rồi chạy `build-backend`/`build-kikar`/`build-prutah` tại ROOT `sp-local-workspace`; sau đó `npm start` tại `servers/selfpointrest` để serve output (3000). Override `PORT` khi trùng. |
 | **F8** | Indexer edits | IndexerPanel | Mở `test/products.js` & `test/specials.js` bằng editor mặc định, **và/hoặc** nhập preset (retailerId / productIds / special) → patch **idempotent + backup**; nút **Restart** indexer. |
 | **F9** | Stop all | StatusTable / RunControls | Dừng **toàn bộ** process đã start, giải phóng port: Windows dùng `taskkill /T /F`, macOS/Linux dùng detached process group `SIGTERM` → `SIGKILL`. |
 | **F10** | Restart | RunControls / IndexerPanel | Restart từng repo (đặc biệt indexer: kill cây cũ → start lại với `--max-old-space-size=3000`). |
 | **F11** | Log & trạng thái | RunControls (log stream) + StatusTable | Mỗi repo stream stdout/stderr realtime; bảng trạng thái hiện state (`stopped/installing/building/running/crashed`) + port + branch. Process tự chết → state chuyển `crashed`. |
-| **F12** | Lưu cấu hình | tự động (store.js) | Nhớ lựa chọn lần trước (workspace roots, repo, branch, env, port override, VPN probe host, VPN client path/args) trong `userData` → mở lại app khôi phục đúng. |
+| **F12** | Lưu cấu hình | tự động (store.js) | Nhớ lựa chọn lần trước (workspace roots, repo, branch, env, port override, VPN client path/args) trong `userData` → mở lại app khôi phục đúng. |
 
 ### Thứ tự build/run khuyến nghị
 
@@ -171,9 +171,9 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 
 **VPN:**
 
-- **Backend** (selfpointrest, loyalty, indexer, token-service) **cần VPN** để truy cập DB/ES nội bộ → kết nối VPN (F5) trước khi run.
+- **Backend** (selfpointrest, loyalty, indexer, token-service) **cần VPN** để truy cập dịch vụ nội bộ → kết nối VPN (F5) trước khi run.
 - **UI thuần** (build/serve: mobile, collection, stor-web, build UI Back Office/Frontend) **không cần VPN** → có thể **Skip** ở bước VPN.
-- VPN probe **host:port** do bạn nhập (vd host DB/ES nội bộ) — không hardcode. Nếu không nhập probe, launcher fallback kiểm adapter theo OS.
+- Launcher detect VPN bằng adapter `Up` theo OS (Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`); không yêu cầu nhập địa chỉ nội bộ và không kiểm tra dịch vụ nội bộ.
 - VPN client mở theo OS/config: Windows OpenVPN GUI mặc định, macOS Tunnelblick mặc định, Linux cần `clientPath`/`clientArgs`. Launcher **không** tự import `.ovpn`/profile.
 
 **An toàn:**
@@ -192,7 +192,7 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 | Windows PowerShell báo `npm.ps1 cannot be loaded because running scripts is disabled` | Chạy bằng `npm.cmd ...` thay vì `npm ...`, hoặc chỉnh Execution Policy theo policy của máy. Đây chỉ là vấn đề Windows/PowerShell; macOS/Linux dùng `npm`/`pnpm` bình thường. |
 | App báo repo dirty khi Checkout/Pull | Vào repo tương ứng, tự `git status`, rồi commit/stash/discard thủ công. Launcher không tự overwrite thay đổi local. |
 | Fetch/Pull lỗi network hoặc auth | Kiểm tra VPN, quyền Git remote, token/SSH key, rồi chạy lại Fetch/Pull. |
-| Backend start lỗi DB/ES | Kiểm tra VPN đã connected thật chưa; nhập probe host/port nội bộ rồi bấm Check/Connect lại. |
+| Backend start lỗi dịch vụ nội bộ | Kiểm tra VPN đã connected thật chưa; bấm **Check** để đọc adapter hoặc **Connect** để mở VPN client rồi đăng nhập lại. |
 | VPN client không mở | Windows: kiểm tra OpenVPN GUI hoặc nhập path đúng. macOS: cài Tunnelblick hoặc override `clientPath`. Linux: nhập lệnh/args phù hợp (`nmcli`, `openvpn3`, `openvpn`, v.v.) trong VPN panel. |
 | `pnpm` không tìm thấy khi chạy stor-web | Chạy `corepack enable`, mở lại terminal/app, rồi thử lại. |
 | Cài deps fail ở bower/gulp/Husky | Xem log trong DepsPanel, sửa nguyên nhân trong repo con, rồi bấm Retry hoặc Force reinstall. |

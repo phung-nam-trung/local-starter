@@ -6,24 +6,20 @@
 //   - openvpn-gui.exe lives at C:\Program Files\OpenVPN\bin\openvpn-gui.exe (default,
 //     overridable). The config dir is empty (no .ovpn imported) — the launcher only
 //     detects + opens the GUI + waits; it never imports/manages .ovpn files.
-//   - Backend (selfpointrest/loyalty/indexer/token-service) needs VPN for internal DB/ES;
+//   - Backend (selfpointrest/loyalty/indexer/token-service) needs VPN for internal services;
 //     pure UI builds do not. The UI exposes a Skip for the UI-only flow.
 //
-// Detection (most reliable first, CONTEXT §9 step 1):
-//   1. TCP-connect to an internal host:port the user CONFIGURES (e.g. the DB/ES host from
-//      .env). This is the trustworthy signal. NOT hardcoded — the probe host comes from
-//      config the user types.
-//   2. Fallback (no probe configured): look for a TAP/OpenVPN network adapter that is `Up`
-//      via PowerShell Get-NetAdapter.
+// Detection (Phase M): look for a VPN-style network adapter that is `Up` via the OS tool.
+// OpenVPN already owns the profile/auth flow; the launcher only opens the client and waits
+// until the adapter comes up. We intentionally do not open test connections to internal hosts.
 //
 // This module is DELIBERATELY pure Node (no `electron` import) so it can be exercised from
-// the CLI with synthetic TCP servers. The native "Hãy đăng nhập VPN" Notification is fired
+// the CLI with mocked OS commands. The native "Hãy đăng nhập VPN" Notification is fired
 // by the ipc/main layer (which has electron), NOT here.
 //
 // Every export returns a SERIALIZABLE plain value / Promise and never throws across IPC.
-// Nothing here logs secrets (we never print the probe host's traffic or .env contents).
+// Nothing here logs secrets (we never print .env contents).
 
-const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
@@ -42,44 +38,11 @@ const DEFAULT_OPENVPN_GUI = 'C:\\Program Files\\OpenVPN\\bin\\openvpn-gui.exe';
 const OPENVPN_GUI_IMAGE = 'openvpn-gui.exe';
 const DEFAULT_MAC_VPN_APP = 'Tunnelblick';
 
-// probe(host, port, timeoutMs) -> Promise<boolean>
-// Attempts a raw TCP connect to host:port. Resolves true when the socket connects, false on
-// any error or timeout. The socket is destroyed immediately either way (we only care that a
-// connection is POSSIBLE, e.g. the internal DB/ES is reachable => VPN is up). Never throws.
-function probe(host, port, timeoutMs = 2000) {
-  return new Promise((resolve) => {
-    const p = Number(port);
-    if (!host || !Number.isInteger(p) || p <= 0 || p > 65535) {
-      resolve(false);
-      return;
-    }
-
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      // Destroy the socket right away — we never send/read any data.
-      try {
-        socket.destroy();
-      } catch (_err) {
-        // ignore
-      }
-      resolve(value);
-    };
-
-    const socket = net.connect({ host, port: p });
-    socket.setTimeout(Math.max(1, Number(timeoutMs) || 2000));
-    socket.once('connect', () => finish(true));
-    socket.once('timeout', () => finish(false));
-    socket.once('error', () => finish(false));
-  });
-}
-
 // VPN-interface name patterns. OpenVPN/WireGuard/etc. bring up a virtual adapter whose name
 // (Windows) or interface (POSIX) matches one of these — the same idea per OS, different tool.
 const VPN_IFACE_RE = /\b(?:tap|tun|utun|ppp|wg|wireguard|openvpn|wintun)\d*\b/i;
 
-// Per-OS adapter probe plan: which command to run + how to parse its output into
+// Per-OS adapter detection plan: which command to run + how to parse its output into
 // { connected, detail }. Each parser must be total (never throw) and only ever return an
 // interface NAME in `detail` (a name is not a secret).
 //
@@ -161,11 +124,10 @@ function adapterPlan(platformName) {
 }
 
 // detectAdapter(options) -> Promise<{ connected, detail? }>
-// Fallback when no probe host is configured: ask the OS for a VPN-style interface that is up.
-// Wrapped in try/catch at every layer — ANY failure (spawn error, non-zero exit, parse error)
-// resolves connected:false. The TCP probe stays the trustworthy signal whenever the user
-// configures a probe host (see isVpnConnected). Test hooks: options.platform forces the OS
-// branch; options.execFileImpl stubs execFile so mac/linux output can be fed in on any host.
+// Ask the OS for a VPN-style interface that is up. Wrapped in try/catch at every layer — ANY
+// failure (spawn error, non-zero exit, parse error) resolves connected:false. Test hooks:
+// options.platform forces the OS branch; options.execFileImpl stubs execFile so mac/linux
+// output can be fed in on any host.
 function detectAdapter(options = {}) {
   const platformName = optionPlatform(options);
   const execFileImpl = options.execFileImpl || execFile;
@@ -193,37 +155,10 @@ function detectAdapter(options = {}) {
 
 // isVpnConnected(config) -> Promise<{ connected, method, detail? }>
 // config:
-//   probeHost  : internal host to TCP-probe (user-configured; NOT hardcoded)
-//   probePort  : internal port to TCP-probe
-//   timeoutMs  : optional probe timeout (default 2000)
-//   platform   : TEST-ONLY hook to force the OS branch for the adapter fallback.
-//   _execFile  : TEST-ONLY hook to inject a fake execFile for the adapter fallback.
-// When a probe host+port is configured we use the TCP probe (method:'probe'). Otherwise we
-// fall back to the per-OS adapter check (method:'adapter'). If neither is possible the result
-// is connected:false, method:'none'. A configured TCP probe is authoritative: if it fails,
-// adapter state must not override it.
+//   platform   : TEST-ONLY hook to force the OS branch for adapter detection.
+//   _execFile  : TEST-ONLY hook to inject a fake execFile for adapter detection.
+// Always uses the per-OS adapter check (method:'adapter').
 async function isVpnConnected(config = {}) {
-  const host = config.probeHost;
-  const port = config.probePort;
-  const hasProbe = Boolean(host) && Number.isInteger(Number(port)) && Number(port) > 0;
-
-  if (hasProbe) {
-    const connected = await probe(host, port, config.timeoutMs);
-    if (connected) {
-      return {
-        connected: true,
-        method: 'probe',
-        detail: `reached ${host}:${port}`,
-      };
-    }
-
-    return {
-      connected: false,
-      method: 'probe',
-      detail: `cannot reach ${host}:${port}`,
-    };
-  }
-
   const adapter = await detectAdapter({
     platform: config.platform,
     execFileImpl: config._execFile,
@@ -572,7 +507,6 @@ function waitForConnection(config = {}, opts = {}) {
 module.exports = {
   DEFAULT_OPENVPN_GUI,
   OPENVPN_GUI_IMAGE,
-  probe,
   detectAdapter,
   isVpnConnected,
   isOpenVpnGuiRunning,

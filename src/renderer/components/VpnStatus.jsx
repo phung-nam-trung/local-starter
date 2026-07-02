@@ -1,19 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-// F5 / TD1 (+ TK6 cross-platform) — standalone VPN panel: detect → launch the per-OS VPN
-// client + notify + poll → Skip.
-// The probe host/port and the VPN client path/args are USER-ENTERED, not hardcoded (CONTEXT
-// §9). The client is per-OS: vpn.js defaults to openvpn-gui.exe (win) / `open -a Tunnelblick`
-// (mac); on Linux (or to override) the user supplies a client command here.
-// Check  : one-shot vpn.check → shows connected/disconnected + which method (probe/adapter).
+// F5 / TD1 (+ TK6/TM2 cross-platform) — standalone VPN panel: detect the per-OS VPN
+// adapter → launch the per-OS VPN client + notify + poll → Skip.
+// The VPN client path/args are USER-ENTERED, not hardcoded (CONTEXT §9). The client is per-OS:
+// vpn.js defaults to openvpn-gui.exe (win) / `open -a Tunnelblick` (mac); on Linux (or to
+// override) the user supplies a client command here.
+// Check  : one-shot vpn.check → shows connected/disconnected from the adapter check.
 // Connect: launches the GUI (if needed) + fires the native "Hãy đăng nhập VPN" notification
-//          + starts a poll; tick count / status stream in until connected, timeout, or Skip.
+//          + starts adapter polling; tick count / status stream in until connected, timeout,
+//          or Skip.
 // Skip   : sets a local "skipped" flag (and cancels any poll) so the UI-only flow can proceed
 //          without VPN. (Gating "backend needs VPN before start" is a later task; TD1 is the
 //          standalone panel + detect/connect/poll/skip.)
 export default function VpnStatus() {
-  const [probeHost, setProbeHost] = useState('');
-  const [probePort, setProbePort] = useState('');
   // VPN client command + optional args (cross-platform, TK6). clientArgs is edited as a
   // whitespace-separated string and stored as an array in config.
   const [clientPath, setClientPath] = useState('');
@@ -26,13 +25,12 @@ export default function VpnStatus() {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [skipped, setSkipped] = useState(false);
-  // F12 / TI1 — gate save-on-change until the persisted probe config is restored.
+  // F12 / TI1 — gate save-on-change until the persisted VPN client config is restored.
   const loadedRef = useRef(false);
 
-  // Restore the saved VPN probe + client config on mount. probePort is stored as a number|null
-  // in the config but the input holds a string, so we stringify it here. clientArgs is stored
-  // as a string[] and shown space-joined. Old configs only had exePath → migrate it into
-  // clientPath (vpn.js still reads exePath, but clientPath is the cross-platform field).
+  // Restore the saved VPN client config on mount. clientArgs is stored as a string[] and shown
+  // space-joined. Old configs only had exePath → migrate it into clientPath (vpn.js still reads
+  // exePath, but clientPath is the cross-platform field).
   useEffect(() => {
     let active = true;
     window.launcher.config
@@ -40,8 +38,6 @@ export default function VpnStatus() {
       .then((config) => {
         if (!active) return;
         const vpn = config.vpn || {};
-        if (typeof vpn.probeHost === 'string') setProbeHost(vpn.probeHost);
-        if (vpn.probePort != null) setProbePort(String(vpn.probePort));
         const path = typeof vpn.clientPath === 'string' && vpn.clientPath
           ? vpn.clientPath
           : typeof vpn.exePath === 'string'
@@ -59,13 +55,11 @@ export default function VpnStatus() {
     };
   }, []);
 
-  // Persist the probe + client config on change (after restore), debounced so we don't write
-  // per keystroke. probePort goes back to number|null; clientArgs back to a string[]. Merge so
-  // other panels' slices survive.
+  // Persist the client config on change (after restore), debounced so we don't write per
+  // keystroke. clientArgs goes back to a string[].
   useEffect(() => {
     if (!loadedRef.current) return;
     const handle = setTimeout(() => {
-      const portNum = probePort.trim() === '' ? null : Number(probePort);
       const argsArray = clientArgs.trim() === '' ? [] : clientArgs.trim().split(/\s+/);
       window.launcher.config
         .load()
@@ -73,8 +67,6 @@ export default function VpnStatus() {
           window.launcher.config.save({
             ...config,
             vpn: {
-              probeHost: probeHost.trim(),
-              probePort: Number.isFinite(portNum) ? portNum : null,
               clientPath: clientPath.trim(),
               clientArgs: argsArray,
             },
@@ -83,7 +75,7 @@ export default function VpnStatus() {
         .catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [probeHost, probePort, clientPath, clientArgs]);
+  }, [clientPath, clientArgs]);
 
   // Subscribe to poll ticks for the whole panel lifetime. The final tick (final:true) carries
   // the poll outcome ({ ok, timedOut, cancelled }).
@@ -108,11 +100,8 @@ export default function VpnStatus() {
   }, []);
 
   function configFromInputs() {
-    const port = probePort.trim() === '' ? undefined : Number(probePort);
     const args = clientArgs.trim() === '' ? undefined : clientArgs.trim().split(/\s+/);
     return {
-      probeHost: probeHost.trim() || undefined,
-      probePort: Number.isFinite(port) ? port : undefined,
       clientPath: clientPath.trim() || undefined,
       clientArgs: args,
     };
@@ -152,11 +141,11 @@ export default function VpnStatus() {
       setPolling(Boolean(res.polling));
       const parts = ['H\u00e3y \u0111\u0103ng nh\u1eadp VPN.'];
       if (res.launch && res.launch.ok === false) {
-        parts.push(`OpenVPN GUI failed: ${res.launch.message || 'unknown error'}.`);
+        parts.push(`VPN client failed: ${res.launch.message || 'unknown error'}.`);
       } else if (res.launch && res.launch.launched) {
-        parts.push('Opened OpenVPN GUI.');
+        parts.push('Opened VPN client.');
       } else if (res.launch && !res.launch.launched) {
-        parts.push('OpenVPN GUI already running.');
+        parts.push('VPN client already running.');
       }
       if (res.notified) parts.push('Notification sent.');
       parts.push('Polling for connection...');
@@ -183,12 +172,12 @@ export default function VpnStatus() {
     setNotice('VPN skipped — UI-only flow allowed (backend repos still need VPN).');
   }
 
-  const connState = !status
-    ? 'unknown'
-    : status.connected
+  const connState = status?.connected
     ? 'connected'
     : polling
     ? 'connecting'
+    : !status
+    ? 'unknown'
     : 'disconnected';
   const stateStyle = styles.badge[connState] || styles.badge.unknown;
 
@@ -207,31 +196,6 @@ export default function VpnStatus() {
       </p>
 
       {status && status.detail ? <p style={styles.meta}>{status.detail}</p> : null}
-
-      <div style={styles.fieldRow}>
-        <label style={styles.label}>
-          Probe host
-          <input
-            type="text"
-            value={probeHost}
-            onChange={(e) => setProbeHost(e.target.value)}
-            placeholder="host nội bộ (vd DB/ES từ .env)"
-            disabled={busy || polling}
-            style={styles.input}
-          />
-        </label>
-        <label style={{ ...styles.label, flex: '0 0 7rem' }}>
-          Port
-          <input
-            type="number"
-            value={probePort}
-            onChange={(e) => setProbePort(e.target.value)}
-            placeholder="vd 5432"
-            disabled={busy || polling}
-            style={styles.input}
-          />
-        </label>
-      </div>
 
       <label style={{ ...styles.label, marginBottom: '0.6rem' }}>
         VPN client path/command (tùy chọn — mặc định theo OS)
@@ -258,8 +222,8 @@ export default function VpnStatus() {
       </label>
 
       <p style={styles.meta}>
-        Không nhập probe host → fallback kiểm adapter VPN theo OS (win Get-NetAdapter, mac
-        ifconfig, linux ip link).
+        Launcher kiểm tra adapter VPN đang Up theo OS (win Get-NetAdapter, mac ifconfig, linux
+        ip link). Connect mở VPN client để bạn đăng nhập rồi poll adapter tới khi connected.
       </p>
 
       <div style={styles.row}>
@@ -299,11 +263,6 @@ const styles = {
   },
   statusLine: {
     margin: '0 0 0.4rem',
-  },
-  fieldRow: {
-    display: 'flex',
-    gap: '0.6rem',
-    marginBottom: '0.6rem',
   },
   label: {
     display: 'flex',
