@@ -9,8 +9,8 @@
 >   - **TL2 PASS:** `deps.js` thêm install target ảo `sp-local-workspace-root` (`getSpWorkspaceRootTarget`/`getDependencyTarget`) để check/install root `node_modules` cho `node builder`.
 >   - **TL3 PASS:** CONTEXT §3/§6/§12 + LAUNCHER đã sửa build-UI = ROOT (bỏ text "cwd selfpointrest"); `build-local` @ `public/backend` là alt thủ công.
 >   - Verify an toàn: `node --check` runner/repos/deps PASS; managed repo `sp-local-workspace` porcelain SẠCH (không đụng). KHÔNG build/run thật.
-> - **CÒN LẠI cần review:** **TH3** (Quick Stop/Restart `stor-web`, đã commit `dc75bf6`) — Reviewer bị session-limit cắt trước khi ra verdict → **chưa có Reviewer PASS**. Cần review `StatusTable.jsx` gọi đúng `runner.stop('stor-web')`/`restart` + tree-kill cây `pnpm→nx→next` (port 3002).
-> - **Next:** review lại TH3; rồi nghiệm thu thật các mục `[~]` (VPN + DB/ES + Linux/macOS).
+> - **TH3 PASS (Claude Leader re-verify 2026-07-02):** `StatusTable.jsx` là file code DUY NHẤT của `dc75bf6` (còn lại là docs). `onStop`→`window.launcher.runner.stop(repoId)`, `onRestart`→`window.launcher.runner.restart(repoId,{})`; nút **Restart** riêng cho `stor-web` (`repo.id==='stor-web'`), per-row busy state (`stopping`/`restarting`). **Tái dùng engine `runner`** (tree-kill cross-OS TK5 đã PASS) → không reinvent kill; port 3002 giải phóng theo engine. `npm run build:renderer` PASS. Click-test thật (app đang chạy) thuộc mục `[~]`.
+> - **Next:** nghiệm thu thật các mục `[~]` (VPN + DB/ES nội bộ; start/stop/restart `stor-web` port 3002 khi app chạy; Linux/macOS end-to-end). Không còn task plan/code nào pending.
 
 > ## 🤝 HANDOFF — Codex đã hoàn thành TK7 + TH3 (2026-07-01)
 > - **Codex đã hoàn thành:** TK7 docs/cross-platform packaging và TH3 quick **Stop/Restart** cho `stor-web` (`new-frontend`) trong bảng Status.
