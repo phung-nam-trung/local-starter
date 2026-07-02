@@ -87,7 +87,7 @@ npm start
 1. Chọn `selfpointrest`.
 2. Kết nối VPN.
 3. Chọn env `prod` hoặc `test`.
-4. Check/install deps nếu cần.
+4. Check/install deps nếu cần. Nếu build Back Office/Kikar/Prutah, launcher phải có deps ở cả ROOT `sp-local-workspace` (cho `node builder`) và `public/backend`/`public/frontend` tương ứng.
 5. Trong RunControls, chọn UI muốn build: Back Office, Kikar, Prutah.
 6. Bấm **Build & Start**.
 7. Mở:
@@ -131,10 +131,10 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 | **F1** | Chọn repo | WorkspaceSettings + StatusTable + RepoList | Xác nhận 2 workspace root resolved hợp lệ (fallback hoặc user chọn), rồi xem danh sách 9 repo nhóm theo workspace; chọn 1 hoặc nhiều repo để vận hành. |
 | **F2** | Chọn branch | BranchPicker (mỗi repo) | Picker hiển thị branch local + remote, **preselect** mặc định (`master` / `new-frontend-dev-prod`); nếu default không tồn tại → chọn từ list thật. |
 | **F3** | Fetch & Pull | BranchPicker | `git fetch --all --prune` → checkout → pull **an toàn** (chỉ pull khi working tree sạch; bẩn → cảnh báo, không overwrite). |
-| **F4** | Install deps | DepsPanel | Cài **khi thiếu/stale** (npm trong từng repo `sp`; `pnpm install` ở **root** `new-frontend`); nút **force reinstall**; stream output; báo lỗi rõ nếu postinstall (gulp buildAll/bower) hoặc Husky fail. |
+| **F4** | Install deps | DepsPanel | Cài **khi thiếu/stale** (npm trong từng repo `sp`; thêm target ROOT `sp-local-workspace` cho UI builder; `pnpm install` ở **root** `new-frontend`); nút **force reinstall**; stream output; báo lỗi rõ nếu postinstall (gulp buildAll/bower) hoặc Husky fail. |
 | **F5** | VPN | VpnStatus | Detect VPN bằng probe TCP `host:port` nội bộ — **bạn tự nhập** host probe; nếu không có probe thì fallback adapter theo OS (Windows `Get-NetAdapter`, macOS `ifconfig`, Linux `ip -o link show`). Nếu down → mở VPN client theo OS/config (`clientPath`/`clientArgs`) + **native notification** "Hãy đăng nhập VPN" + poll tới khi up. Có nút **Skip** (chỉ chạy UI thì không cần VPN). |
 | **F6** | Env selfpointrest | EnvSelector | Chọn **prod / test** (mặc định **prod**) → backup `.env` hiện tại (`.env.bak-<timestamp>`) → copy `.env-prod`/`.env-test` → `.env`; đảm bảo `clients_dir="../../public"`. **Không in nội dung `.env` ra log.** |
-| **F7** | Build & Run | RunControls | Build/run đúng thứ tự. selfpointrest: install→`buildAll`→(tùy chọn build UI Back Office/Kikar/Prutah qua script selfpointrest)→`npm start` (3000). Override `PORT` khi trùng. |
+| **F7** | Build & Run | RunControls | Build/run đúng thứ tự. selfpointrest: install server→`buildAll` tại `servers/selfpointrest`; nếu build UI Back Office/Kikar/Prutah thì kiểm tra ROOT + public deps rồi chạy `build-backend`/`build-kikar`/`build-prutah` tại ROOT `sp-local-workspace`; sau đó `npm start` tại `servers/selfpointrest` để serve output (3000). Override `PORT` khi trùng. |
 | **F8** | Indexer edits | IndexerPanel | Mở `test/products.js` & `test/specials.js` bằng editor mặc định, **và/hoặc** nhập preset (retailerId / productIds / special) → patch **idempotent + backup**; nút **Restart** indexer. |
 | **F9** | Stop all | StatusTable / RunControls | Dừng **toàn bộ** process đã start, giải phóng port: Windows dùng `taskkill /T /F`, macOS/Linux dùng detached process group `SIGTERM` → `SIGKILL`. |
 | **F10** | Restart | RunControls / IndexerPanel | Restart từng repo (đặc biệt indexer: kill cây cũ → start lại với `--max-old-space-size=3000`). |
@@ -145,9 +145,10 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 
 ```
 1. (Nếu chạy backend cần DB) → bảo đảm VPN đã kết nối (F5)
-2. selfpointrest: chọn env prod/test (F6) → install (nếu thiếu) → buildAll
-     → (tùy chọn) build-backend / build-kikar / build-prutah để xem UI
-     → npm start (port 3000; UI ở /backend, /kikar, /prutah)
+2. selfpointrest: chọn env prod/test (F6) → install server nếu thiếu → `buildAll` tại `servers/selfpointrest`
+     → (tùy chọn) kiểm tra/install ROOT `sp-local-workspace` + public UI deps
+     → tại ROOT `sp-local-workspace`: `build-backend` / `build-kikar` / `build-prutah`
+     → `npm start` tại `servers/selfpointrest` (port 3000; serve UI ở /backend, /kikar, /prutah)
 3. loyalty (4000), token-service (4001), indexer (4002, sau khi sửa code) — song song được
 4. UI độc lập: mobile (9000) HOẶC collection (9000), stor-web (3002)
 ```
@@ -197,7 +198,7 @@ Mọi thao tác làm trong cửa sổ launcher. Bảng trạng thái tổng nằ
 | Cài deps fail ở bower/gulp/Husky | Xem log trong DepsPanel, sửa nguyên nhân trong repo con, rồi bấm Retry hoặc Force reinstall. |
 | Port bận (`EADDRINUSE`) | Dùng StatusTable/RunControls để Stop repo đang giữ port, hoặc tự kiểm bằng `netstat`. Với `mobile`/`collection`, chỉ chạy một repo trên port 9000. |
 | Stop xong vẫn còn process node/gulp/next | Dùng **Stop all**. Nếu vẫn còn, kiểm tra Task Manager/Activity Monitor/`ps` và kill tay process mồ côi, rồi báo lại để kiểm tra runner. |
-| selfpointrest không thấy `/backend`, `/kikar`, `/prutah` | Đảm bảo đã chọn build UI tương ứng trước khi start selfpointrest; kiểm tra `.env` có `clients_dir="../../public"`. |
+| selfpointrest không thấy `/backend`, `/kikar`, `/prutah` | Đảm bảo đã chọn build UI tương ứng trước khi start selfpointrest; build UI phải chạy tại ROOT `sp-local-workspace` sau khi đã có root deps + public UI deps; kiểm tra `.env` có `clients_dir="../../public"`. |
 | Không muốn đụng env thật khi test | Không bấm Apply env trong selfpointrest. EnvSelector chỉ đổi `.env` khi bấm Apply và luôn backup trước. |
 
 ---

@@ -8,7 +8,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { getRepo } = require('./repos');
+const { getRepo, getWorkspaceRoots } = require('./repos');
 const platform = require('./platform');
 
 const LOCKFILES_BY_PM = {
@@ -16,10 +16,34 @@ const LOCKFILES_BY_PM = {
   pnpm: ['pnpm-lock.yaml'],
 };
 
+const INSTALL_TARGETS = Object.freeze({
+  SP_WORKSPACE_ROOT: 'sp-local-workspace-root',
+});
+
 const activeInstalls = new Map();
 
 function commandFor(packageManager) {
   return platform.pmCommand(packageManager);
+}
+
+function getSpWorkspaceRootTarget() {
+  const roots = getWorkspaceRoots();
+  return {
+    id: INSTALL_TARGETS.SP_WORKSPACE_ROOT,
+    name: 'sp-local-workspace root',
+    workspace: 'sp-local-workspace',
+    packageManager: 'npm',
+    installCwd: roots['sp-local-workspace'],
+    install: 'npm install',
+    hidden: true,
+    postinstallNote: 'required by root builder scripts build-backend/build-kikar/build-prutah',
+  };
+}
+
+function getDependencyTarget(targetId) {
+  return getRepo(targetId) || (targetId === INSTALL_TARGETS.SP_WORKSPACE_ROOT
+    ? getSpWorkspaceRootTarget()
+    : null);
 }
 
 async function statOrNull(filePath) {
@@ -135,12 +159,12 @@ async function getDependencyStatusForRepo(repo) {
 }
 
 async function getDependencyStatus(repoId) {
-  const repo = getRepo(repoId);
+  const repo = getDependencyTarget(repoId);
   if (!repo) {
     return {
       ok: false,
-      reason: 'unknown-repo',
-      message: `Unknown repoId: ${repoId}`,
+      reason: 'unknown-target',
+      message: `Unknown dependency target: ${repoId}`,
     };
   }
   try {
@@ -148,6 +172,9 @@ async function getDependencyStatus(repoId) {
   } catch (err) {
     return {
       ok: false,
+      repoId: repo.id,
+      packageManager: repo.packageManager,
+      installCwd: repo.installCwd,
       reason: 'error',
       message: (err && err.message) || String(err),
     };
@@ -323,12 +350,12 @@ function spawnInstall(repo, plan, onOutput) {
 }
 
 async function installDeps(repoId, options = {}) {
-  const repo = getRepo(repoId);
+  const repo = getDependencyTarget(repoId);
   if (!repo) {
     return {
       ok: false,
-      reason: 'unknown-repo',
-      message: `Unknown repoId: ${repoId}`,
+      reason: 'unknown-target',
+      message: `Unknown dependency target: ${repoId}`,
     };
   }
 
@@ -379,6 +406,8 @@ async function installDepsForRepo(repo, options = {}) {
 }
 
 module.exports = {
+  INSTALL_TARGETS,
+  getDependencyTarget,
   getDependencyStatus,
   getDependencyStatusForRepo,
   getInstallPlanForRepo,

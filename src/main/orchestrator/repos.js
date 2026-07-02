@@ -72,6 +72,7 @@ function getWorkspaceRoots() {
 //   packageManager  : 'npm' | 'pnpm'
 //   installCwd      : absolute dir where install runs
 //   runCwd          : absolute dir where build/start run
+//   buildCwd        : optional absolute dir for build-only/UI build commands
 //   install         : install command
 //   build           : build command, or null
 //   start           : start/serve command, or null (build-only repos)
@@ -185,10 +186,11 @@ const repos = [
     path: path.join(SP, 'public', 'backend'),
     packageManager: 'npm',
     installCwd: path.join(SP, 'public', 'backend'),
-    // Built via selfpointrest orchestration script, which runs from selfpointrest.
+    // Built via the sp-local-workspace root builder; selfpointrest only serves the output.
+    buildCwd: SP,
     runCwd: path.join(SP, 'servers', 'selfpointrest'),
     install: 'npm install', // postinstall runs `npx bower install`
-    build: 'npm run build-backend', // selfpointrest: node builder backend build -> build/backend
+    build: 'npm run build-backend', // root builder: node builder backend build -> build/backend
     start: null,
     port: null,
     defaultBranch: SP_BRANCH,
@@ -208,7 +210,8 @@ const repos = [
     path: path.join(SP, 'public', 'frontend'),
     packageManager: 'npm',
     installCwd: path.join(SP, 'public', 'frontend'),
-    // Built via selfpointrest orchestration scripts (per template).
+    // Built via the sp-local-workspace root builder (per template).
+    buildCwd: SP,
     runCwd: path.join(SP, 'servers', 'selfpointrest'),
     install: 'npm install', // postinstall runs `npx bower install --config.directory=libs`
     // No single build: TF1 builds per template from `templates` below.
@@ -221,18 +224,18 @@ const repos = [
     servedBy: { repo: 'selfpointrest', route: '/kikar | /prutah' },
     portConflictWith: null,
     needsCodeEdit: false,
-    // Each template builds via selfpointrest and is served on its own route.
+    // Each template builds via the root builder and is served by selfpointrest.
     templates: [
       {
         id: 'kikar',
         name: 'Kikar',
-        build: 'npm run build-kikar', // selfpointrest: node builder frontend build -t kikar
+        build: 'npm run build-kikar', // root builder: node builder frontend build -t kikar
         servedBy: { repo: 'selfpointrest', route: '/kikar' },
       },
       {
         id: 'prutah',
         name: 'Prutah',
-        build: 'npm run build-prutah', // selfpointrest: node builder frontend build -t prutah
+        build: 'npm run build-prutah', // root builder: node builder frontend build -t prutah
         servedBy: { repo: 'selfpointrest', route: '/prutah' },
       },
     ],
@@ -339,12 +342,14 @@ const REPO_PATHS = {
     workspace: 'sp-local-workspace',
     path: ['public', 'backend'],
     installCwd: ['public', 'backend'],
+    buildCwd: [],
     runCwd: ['servers', 'selfpointrest'],
   },
   frontend: {
     workspace: 'sp-local-workspace',
     path: ['public', 'frontend'],
     installCwd: ['public', 'frontend'],
+    buildCwd: [],
     runCwd: ['servers', 'selfpointrest'],
   },
   mobile: {
@@ -378,6 +383,9 @@ function refreshRepoPaths() {
     repo.path = workspacePath(spec.workspace, spec.path);
     repo.installCwd = workspacePath(spec.workspace, spec.installCwd);
     repo.runCwd = workspacePath(spec.workspace, spec.runCwd);
+    if (spec.buildCwd) {
+      repo.buildCwd = workspacePath(spec.workspace, spec.buildCwd);
+    }
   });
   return repos;
 }

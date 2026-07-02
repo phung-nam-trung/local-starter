@@ -10,9 +10,9 @@
 //   2. the main build (npm run buildAll)
 //   3. start (npm start) — long-running on port 3000
 //
-// Commands come from the registry (repos.js). We never hardcode paths/commands here, so
-// loyalty/token-service/stor-web/etc. drive through the SAME engine (their build step is
-// just skipped when null).
+// Commands and cwd values come from the registry (repos.js). We never hardcode repo paths
+// here, so loyalty/token-service/stor-web/etc. drive through the SAME engine (their build
+// step is just skipped when null).
 //
 // Process-tree handling (CONTEXT §10.2/§10.3) — cross-platform via platform.killTree:
 //   - We always spawn with shell:true so npm.cmd / pnpm.cmd (win) and npm/pnpm (posix)
@@ -28,6 +28,7 @@
 
 const { spawn } = require('node:child_process');
 const { getRepo, repos } = require('./repos');
+const deps = require('./deps');
 const { isPortBusy, repoForPort } = require('./ports');
 const platform = require('./platform');
 
@@ -103,7 +104,8 @@ function emit(onOutput, payload) {
 
 // Build the ordered list of steps for a repo + options. Each step is one-shot unless
 // `longRunning` is true (the final start step). Commands are strings from the registry;
-// they run via the shell (shell:true), so e.g. "npm run buildAll" works as-is.
+// they run via the shell (shell:true), so e.g. "npm run buildAll" works as-is. A step can
+// carry its own cwd when it intentionally differs from repo.runCwd.
 //
 // opts:
 //   buildUIs   : { backend?, kikar?, prutah? } — selfpointrest only; build before buildAll.
@@ -130,13 +132,36 @@ function buildSteps(repo, opts = {}) {
 
   const steps = [];
 
-  // selfpointrest UI builds run via selfpointrest's own orchestration scripts and from
-  // selfpointrest's runCwd (CONTEXT §6 / registry). Order: backend, kikar, prutah.
+  // selfpointrest UI builds use the sp-local-workspace root builder. buildAll/start below
+  // still use selfpointrest's runCwd. Order: backend, kikar, prutah.
   if (repo.id === 'selfpointrest' && opts.buildUIs) {
     const ui = opts.buildUIs;
-    if (ui.backend) steps.push({ kind: 'build', label: 'build-backend', command: 'npm run build-backend' });
-    if (ui.kikar) steps.push({ kind: 'build', label: 'build-kikar', command: 'npm run build-kikar' });
-    if (ui.prutah) steps.push({ kind: 'build', label: 'build-prutah', command: 'npm run build-prutah' });
+    const backendBuildCwd = (getRepo('backend') || {}).buildCwd;
+    const frontendBuildCwd = (getRepo('frontend') || {}).buildCwd;
+    if (ui.backend) {
+      steps.push({
+        kind: 'build',
+        label: 'build-backend',
+        command: 'npm run build-backend',
+        cwd: backendBuildCwd,
+      });
+    }
+    if (ui.kikar) {
+      steps.push({
+        kind: 'build',
+        label: 'build-kikar',
+        command: 'npm run build-kikar',
+        cwd: frontendBuildCwd,
+      });
+    }
+    if (ui.prutah) {
+      steps.push({
+        kind: 'build',
+        label: 'build-prutah',
+        command: 'npm run build-prutah',
+        cwd: frontendBuildCwd,
+      });
+    }
   }
 
   // The repo's own build step (selfpointrest: npm run buildAll; token-service: npm run build).
@@ -150,6 +175,71 @@ function buildSteps(repo, opts = {}) {
   }
 
   return steps;
+}
+
+function hasSelectedBuildUi(buildUIs) {
+  return Boolean(buildUIs && (buildUIs.backend || buildUIs.kikar || buildUIs.prutah));
+}
+
+function buildUiDependencyTargets(buildUIs) {
+  if (!hasSelectedBuildUi(buildUIs)) return [];
+
+  const targets = [deps.INSTALL_TARGETS.SP_WORKSPACE_ROOT];
+  if (buildUIs.backend) targets.push('backend');
+  if (buildUIs.kikar || buildUIs.prutah) targets.push('frontend');
+  return targets;
+}
+
+function dependencyLabel(targetId) {
+  if (targetId === deps.INSTALL_TARGETS.SP_WORKSPACE_ROOT) return 'sp-local-workspace root';
+  const target = getRepo(targetId);
+  return target ? target.name : targetId;
+}
+
+function dependencyInstallText(targetId, result) {
+  const status = result && result.status;
+  const target = deps.getDependencyTarget(targetId);
+  const packageManager = (status && status.packageManager) || (target && target.packageManager) || 'npm';
+  const installCwd = (status && status.installCwd) || (result && result.installCwd) || (target && target.installCwd);
+  return `Run "${packageManager} install"${installCwd ? ` in ${installCwd}` : ''}.`;
+}
+
+async function checkBuildUiPrerequisites(buildUIs) {
+  const targetIds = buildUiDependencyTargets(buildUIs);
+  if (targetIds.length === 0) {
+    return { ok: true, checks: [] };
+  }
+
+  const checks = [];
+  for (const targetId of targetIds) {
+    const result = await deps.getDependencyStatus(targetId);
+    checks.push({
+      targetId,
+      label: dependencyLabel(targetId),
+      ...result,
+    });
+  }
+
+  const blockers = checks.filter((check) => !check.ok || (check.status && check.status.needed));
+  if (blockers.length === 0) {
+    return { ok: true, checks };
+  }
+
+  const lines = blockers.map((check) => {
+    const detail = check.ok && check.status ? check.status.message : check.message;
+    return `- ${check.label}: ${detail || 'dependency status unavailable'} ${dependencyInstallText(check.targetId, check)}`;
+  });
+
+  return {
+    ok: false,
+    reason: 'missing-build-ui-deps',
+    checks,
+    blockers,
+    message: [
+      'Build UI prerequisites are missing or stale; no build step was started.',
+      ...lines,
+    ].join('\n'),
+  };
 }
 
 // Compute the effective port + env for spawning. PORT override (opts.port) is prepared
@@ -368,6 +458,21 @@ async function start(repoId, opts = {}) {
     };
   }
 
+  if (repo.id === 'selfpointrest' && hasSelectedBuildUi(opts.buildUIs) && !opts.commandOverride) {
+    const prereqs = await checkBuildUiPrerequisites(opts.buildUIs);
+    if (!prereqs.ok) {
+      entry.state = STATES.STOPPED;
+      entry.step = null;
+      return {
+        ok: false,
+        reason: prereqs.reason,
+        message: prereqs.message,
+        prerequisites: prereqs.checks,
+        status: snapshot(entry, repo),
+      };
+    }
+  }
+
   const onOutput = opts.onOutput;
   const { env, port } = resolveEnv(repo, opts);
 
@@ -384,7 +489,8 @@ async function start(repoId, opts = {}) {
   for (const step of buildSteps2) {
     entry.state = STATES.BUILDING;
     entry.step = step.label;
-    const res = await runBuildStep(entry, repo, step, cwd, env, onOutput);
+    const stepCwd = step.cwd || cwd;
+    const res = await runBuildStep(entry, repo, step, stepCwd, env, onOutput);
     if (entry.stopping) {
       entry.state = STATES.STOPPED;
       return {
@@ -439,7 +545,8 @@ async function start(repoId, opts = {}) {
     }
   }
 
-  const res = spawnLongRunning(entry, repo, startStep, cwd, env, port, onOutput);
+  const startCwd = startStep.cwd || cwd;
+  const res = spawnLongRunning(entry, repo, startStep, startCwd, env, port, onOutput);
   if (!res.ok) {
     return {
       ok: false,
@@ -612,6 +719,7 @@ function describeRun(repoId, opts = {}) {
     kind: s.kind,
     label: s.label,
     command: s.command,
+    cwd: s.cwd || cwd,
     longRunning: Boolean(s.longRunning),
   }));
   return {
@@ -622,6 +730,17 @@ function describeRun(repoId, opts = {}) {
     portOverridden: opts.port != null,
     buildOnly: Boolean(repo.buildOnly),
     servedBy: repo.servedBy || null,
+    dependencyPrerequisites: repo.id === 'selfpointrest'
+      ? buildUiDependencyTargets(opts.buildUIs).map((targetId) => {
+          const target = deps.getDependencyTarget(targetId);
+          return {
+            targetId,
+            label: dependencyLabel(targetId),
+            packageManager: target ? target.packageManager : null,
+            installCwd: target ? target.installCwd : null,
+          };
+        })
+      : [],
     steps,
   };
 }
@@ -634,5 +753,6 @@ module.exports = {
   restart,
   getStatus,
   getAllStatuses,
+  checkBuildUiPrerequisites,
   describeRun,
 };
